@@ -215,6 +215,8 @@ let POSICIONES = [];
 let OPERACIONES = [];
 let LIQUIDEZ = { saldo: 0 };
 let VALUACIONES = [];
+let LOTES = [];
+let RESULTADOS = [];
 
 async function cargarCuotapartistas(){
   const { data } = await sb.from('cuotapartistas').select('*').eq('fondo_id', FONDO_ID);
@@ -229,7 +231,7 @@ async function cargarMovimientos(){
 }
 async function cargarPosiciones(){
   const { data } = await sb.from('posiciones_fondo').select('*').eq('fondo_id', FONDO_ID);
-  POSICIONES = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, cantidad:r.cantidad, precioPromedio:r.precio_promedio, precioActual:r.precio_actual }));
+  POSICIONES = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, precioActual:r.precio_actual }));
 }
 async function cargarOperaciones(){
   const { data } = await sb.from('operaciones_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha',{ascending:false});
@@ -243,17 +245,43 @@ async function cargarValuaciones(){
   const { data } = await sb.from('valuaciones_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha',{ascending:true});
   VALUACIONES = (data||[]).map(r=>({ fecha:r.fecha, patrimonioTotal:r.patrimonio_total, cuotapartesTotales:r.cuotapartes_totales, valorCuotaparte:r.valor_cuotaparte }));
 }
+async function cargarLotes(){
+  const { data } = await sb.from('lotes_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha_apertura',{ascending:true});
+  LOTES = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, fechaApertura:r.fecha_apertura, cantidadOriginal:r.cantidad_original, cantidadRestante:r.cantidad_restante, precioApertura:r.precio_apertura, comisionApertura:r.comision_apertura, operacionAperturaId:r.operacion_apertura_id }));
+}
+async function cargarResultados(){
+  const { data } = await sb.from('resultados_realizados_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha_cierre',{ascending:false});
+  RESULTADOS = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, fechaApertura:r.fecha_apertura, fechaCierre:r.fecha_cierre, cantidad:r.cantidad, precioApertura:r.precio_apertura, precioCierre:r.precio_cierre, comisionApertura:r.comision_apertura, comisionCierre:r.comision_cierre, resultado:r.resultado, diasEnPosicion:r.dias_en_posicion }));
+}
 async function cargarTodo(){
-  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones()]);
+  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados()]);
 }
 
 // ---------- CÁLCULOS DEL FONDO ----------
+function clavePosicion(p){ return (p.ticker||'')+'|'+(p.tipoOpcion||'')+'|'+(p.strike||'')+'|'+(p.vencimiento||''); }
+
+// Agrega los lotes abiertos (cantidadRestante>0) por instrumento: cantidad total y precio de entrada promedio ponderado.
+function posicionesAgregadas(){
+  const grupos = {};
+  for(const l of LOTES){
+    if(l.cantidadRestante<=0) continue;
+    const clave = clavePosicion(l);
+    if(!grupos[clave]) grupos[clave] = { tipoActivo:l.tipoActivo, ticker:l.ticker, subyacente:l.subyacente, tipoOpcion:l.tipoOpcion, strike:l.strike, vencimiento:l.vencimiento, cantidad:0, costoTotal:0 };
+    grupos[clave].cantidad += l.cantidadRestante;
+    grupos[clave].costoTotal += l.cantidadRestante*l.precioApertura;
+  }
+  return Object.values(grupos).map(g=>{
+    const precioCache = POSICIONES.find(p=>clavePosicion(p)===clavePosicion(g));
+    return { ...g, precioPromedio: g.cantidad>0 ? g.costoTotal/g.cantidad : 0, precioActual: precioCache ? precioCache.precioActual : null };
+  });
+}
 function valorMercadoPosicion(p){
   const mult = p.tipoActivo==='Opción' ? 100 : 1;
   const precio = p.precioActual!=null ? p.precioActual : (p.precioPromedio||0);
   return (precio||0) * (p.cantidad||0) * mult;
 }
-function patrimonioCartera(){ return POSICIONES.reduce((s,p)=>s+valorMercadoPosicion(p),0); }
+function patrimonioCartera(){ return posicionesAgregadas().reduce((s,p)=>s+valorMercadoPosicion(p),0); }
+function resultadoRealizadoAcumulado(){ return RESULTADOS.reduce((s,r)=>s+r.resultado,0); }
 function patrimonioTotalFondo(){ return patrimonioCartera() + (LIQUIDEZ.saldo||0); }
 function cuotapartesTotalesFondo(){
   return MOVIMIENTOS.reduce((s,m)=> s + (m.tipo==='Suscripción'?m.cantidadCuotapartes:-m.cantidadCuotapartes), 0);
@@ -293,6 +321,7 @@ function showInicioKairos(){
       <div class="kpi"><div class="kpi-label">Valor de cuotaparte</div><div class="kpi-value">${valorCuota!=null?fmtUSD(valorCuota):'<span class="na">N/D</span>'}</div></div>
       <div class="kpi"><div class="kpi-label">Cuotapartes en circulación</div><div class="kpi-value">${fmtNum(cuotapartes)}</div></div>
       <div class="kpi"><div class="kpi-label">Cuotapartistas activos</div><div class="kpi-value">${activos}</div></div>
+      <div class="kpi"><div class="kpi-label">Resultado realizado acumulado</div><div class="kpi-value">${fmtUSD(resultadoRealizadoAcumulado())}</div></div>
     </div>
     <div class="panel">
       <h3>Evolución del valor de cuotaparte</h3>
@@ -303,7 +332,7 @@ function showInicioKairos(){
       <div class="fichagrid">
         <div class="f"><div class="f-label">Liquidez disponible</div>${fmtUSD(LIQUIDEZ.saldo)}</div>
         <div class="f"><div class="f-label">Valor de mercado de la cartera</div>${fmtUSD(patrimonioCartera())}</div>
-        <div class="f"><div class="f-label">Posiciones</div>${POSICIONES.filter(p=>p.cantidad!==0).length}</div>
+        <div class="f"><div class="f-label">Posiciones</div>${posicionesAgregadas().length}</div>
       </div>
     </div>
   `;
@@ -590,20 +619,20 @@ function imprimirComprobante(movId){
 }
 
 // ---------- CARTERA DEL FONDO ----------
-function clavePosicion(p){ return (p.ticker||'')+'|'+(p.tipoOpcion||'')+'|'+(p.strike||'')+'|'+(p.vencimiento||''); }
-
 function showCarteraFondo(){
   currentView='cartera'; setNav('nav-cartera');
   destroyCharts();
   const main = document.getElementById('main');
-  const activas = POSICIONES.filter(p=>p.cantidad!==0).sort((a,b)=>valorMercadoPosicion(b)-valorMercadoPosicion(a));
+  const activas = posicionesAgregadas().sort((a,b)=>valorMercadoPosicion(b)-valorMercadoPosicion(a));
+  const resultados = RESULTADOS;
   main.innerHTML = `
     <h1>Cartera del Fondo</h1>
-    <p class="subtitle">Posiciones actuales de Apex Strategy Fund — se cargan a mano y se ajustan con el registro de operaciones.</p>
+    <p class="subtitle">Posiciones actuales de Apex Strategy Fund — se derivan de los lotes abiertos y se ajustan con el registro de operaciones.</p>
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-label">Valor de mercado cartera</div><div class="kpi-value">${fmtUSD(patrimonioCartera())}</div></div>
       <div class="kpi"><div class="kpi-label">Liquidez disponible</div><div class="kpi-value">${fmtUSD(LIQUIDEZ.saldo)}</div></div>
       <div class="kpi"><div class="kpi-label">Patrimonio total</div><div class="kpi-value">${fmtUSD(patrimonioTotalFondo())}</div></div>
+      <div class="kpi"><div class="kpi-label">Resultado realizado acumulado</div><div class="kpi-value">${fmtUSD(resultadoRealizadoAcumulado())}</div></div>
     </div>
     <div style="display:flex;gap:10px;margin-bottom:20px;">
       <button class="btn small" onclick="showFormPosicion()">+ Agregar posición manual</button>
@@ -616,7 +645,7 @@ function showCarteraFondo(){
       <h3>Posiciones</h3>
       ${activas.length===0?'<div class="empty">Todavía no hay posiciones cargadas.</div>':`
       <table>
-        <tr><th>Ticker</th><th>Tipo</th><th>Detalle</th><th class="right">Cantidad</th><th class="right">Precio prom.</th><th class="right">Precio actual</th><th class="right">Valor mercado</th><th></th></tr>
+        <tr><th>Ticker</th><th>Tipo</th><th>Detalle</th><th class="right">Cantidad</th><th class="right">Precio prom.</th><th class="right">Precio actual</th><th class="right">Valor mercado</th></tr>
         ${activas.map(p=>{
           const detalle = p.tipoActivo==='Opción' ? `${p.subyacente||''} ${p.tipoOpcion||''} ${p.strike||''} · ${p.vencimiento||''}` : '-';
           return `
@@ -628,11 +657,32 @@ function showCarteraFondo(){
             <td class="right">${fmtUSD(p.precioPromedio)}</td>
             <td class="right">${fmtUSD(p.precioActual)}</td>
             <td class="right">${fmtUSD(valorMercadoPosicion(p))}</td>
-            <td class="right"><span class="del" style="opacity:1;cursor:pointer;" onclick="eliminarPosicion('${p.id}')">eliminar</span></td>
           </tr>`;
         }).join('')}
       </table>`}
-      <div class="notebox">Las cotizaciones de acciones se pueden actualizar automáticamente (Finnhub). Las opciones no tienen fuente gratuita disponible — el precio actual de las opciones se actualiza a mano o queda en el último precio operado.</div>
+      <div class="notebox">Las cotizaciones de acciones se pueden actualizar automáticamente (Finnhub). Las opciones no tienen fuente gratuita disponible — el precio actual de las opciones se actualiza a mano o queda en el último precio operado. La cantidad y el precio promedio se calculan a partir de los lotes de compra abiertos (FIFO).</div>
+    </div>
+    <div class="panel">
+      <h3>Resultados realizados (${resultados.length})</h3>
+      ${resultados.length===0?'<div class="empty">Todavía no se cerró ninguna posición.</div>':`
+      <table>
+        <tr><th>Ticker</th><th>Tipo</th><th class="right">Cantidad</th><th>Apertura</th><th>Cierre</th><th class="right">Días</th><th class="right">Precio apertura</th><th class="right">Precio cierre</th><th class="right">Resultado</th></tr>
+        ${resultados.map(r=>{
+          const color = r.resultado>=0 ? 'var(--pos, #1a9e5c)' : 'var(--neg, #c0392b)';
+          return `
+          <tr>
+            <td class="name">${r.ticker}</td>
+            <td><span class="badge-mini">${r.tipoActivo}</span></td>
+            <td class="right">${fmtNum(r.cantidad)}</td>
+            <td>${r.fechaApertura}</td>
+            <td>${r.fechaCierre}</td>
+            <td class="right">${r.diasEnPosicion}</td>
+            <td class="right">${fmtUSD(r.precioApertura)}</td>
+            <td class="right">${fmtUSD(r.precioCierre)}</td>
+            <td class="right" style="color:${color};font-weight:600;">${fmtUSD(r.resultado)}</td>
+          </tr>`;
+        }).join('')}
+      </table>`}
     </div>
   `;
 }
@@ -658,10 +708,13 @@ function showFormPosicion(){
         </div>
       </div>
       <div class="formrow">
+        <div><label>Fecha de apertura</label><input type="date" id="pos-fechaApertura" value="${new Date().toISOString().slice(0,10)}"></div>
         <div><label>Cantidad</label><input type="text" id="pos-cantidad" placeholder="100"></div>
-        <div><label>Precio promedio de compra</label><input type="text" id="pos-precioPromedio" placeholder="150.00"></div>
       </div>
-      <label>Precio actual</label><input type="text" id="pos-precioActual" placeholder="150.00">
+      <div class="formrow">
+        <div><label>Precio de compra</label><input type="text" id="pos-precioPromedio" placeholder="150.00"></div>
+        <div><label>Precio actual</label><input type="text" id="pos-precioActual" placeholder="150.00"></div>
+      </div>
       <button class="btn" onclick="guardarPosicionManual()">Guardar posición</button>
       <button class="btn secondary" onclick="document.getElementById('form-posicion-container').innerHTML=''">Cancelar</button>
     </div>
@@ -672,27 +725,43 @@ function toggleCamposOpcionPosicion(){
   document.getElementById('pos-campos-opcion').style.display = esOpcion ? '' : 'none';
 }
 
+async function actualizarPrecioCache(datos, precio){
+  const clave = clavePosicion(datos);
+  let pos = POSICIONES.find(p=>clavePosicion(p)===clave);
+  if(pos){
+    pos.precioActual = precio;
+    await sb.from('posiciones_fondo').update({ precio_actual: precio, fecha_actualizacion: new Date().toISOString() }).eq('id', pos.id);
+  } else {
+    const row = { fondo_id: FONDO_ID, tipo_activo: datos.tipoActivo, ticker: datos.ticker, subyacente: datos.subyacente||null, tipo_opcion: datos.tipoOpcion||null, strike: datos.strike||null, vencimiento: datos.vencimiento||null, precio_actual: precio, fecha_actualizacion: new Date().toISOString() };
+    const { data } = await sb.from('posiciones_fondo').insert(row).select().single();
+    if(data) POSICIONES.push({ id:data.id, tipoActivo:data.tipo_activo, ticker:data.ticker, subyacente:data.subyacente, tipoOpcion:data.tipo_opcion, strike:data.strike, vencimiento:data.vencimiento, precioActual:data.precio_actual });
+  }
+}
+
 async function guardarPosicionManual(){
   const msg = document.getElementById('cartera-msg');
   const tipoActivo = document.getElementById('pos-tipoActivo').value;
   const ticker = document.getElementById('pos-ticker').value.trim().toUpperCase();
+  const fechaApertura = document.getElementById('pos-fechaApertura').value;
   const cantidad = parseFloat(String(document.getElementById('pos-cantidad').value).replace(',','.'));
   const precioPromedio = parseFloat(String(document.getElementById('pos-precioPromedio').value).replace(',','.'));
   const precioActual = parseFloat(String(document.getElementById('pos-precioActual').value).replace(',','.'));
   if(!ticker){ msg.className='msg err'; msg.textContent='Ingresá el ticker.'; return; }
-  if(isNaN(cantidad)){ msg.className='msg err'; msg.textContent='Ingresá la cantidad.'; return; }
-  const row = {
-    fondo_id: FONDO_ID, tipo_activo: tipoActivo, ticker,
+  if(!fechaApertura){ msg.className='msg err'; msg.textContent='Ingresá la fecha de apertura.'; return; }
+  if(isNaN(cantidad)||cantidad<=0){ msg.className='msg err'; msg.textContent='Ingresá la cantidad.'; return; }
+  if(isNaN(precioPromedio)){ msg.className='msg err'; msg.textContent='Ingresá el precio de compra.'; return; }
+  const datos = {
+    tipoActivo, ticker,
     subyacente: tipoActivo==='Opción' ? (document.getElementById('pos-subyacente').value.trim().toUpperCase()||null) : null,
-    tipo_opcion: tipoActivo==='Opción' ? document.getElementById('pos-tipoOpcion').value : null,
+    tipoOpcion: tipoActivo==='Opción' ? document.getElementById('pos-tipoOpcion').value : null,
     strike: tipoActivo==='Opción' ? (parseFloat(String(document.getElementById('pos-strike').value).replace(',','.'))||null) : null,
-    vencimiento: tipoActivo==='Opción' ? (document.getElementById('pos-vencimiento').value||null) : null,
-    cantidad, precio_promedio: isNaN(precioPromedio)?null:precioPromedio, precio_actual: isNaN(precioActual)?null:precioActual,
-    fecha_actualizacion: new Date().toISOString()
+    vencimiento: tipoActivo==='Opción' ? (document.getElementById('pos-vencimiento').value||null) : null
   };
+  const loteRow = { fondo_id: FONDO_ID, tipo_activo: datos.tipoActivo, ticker: datos.ticker, subyacente: datos.subyacente, tipo_opcion: datos.tipoOpcion, strike: datos.strike, vencimiento: datos.vencimiento, fecha_apertura: fechaApertura, cantidad_original: cantidad, cantidad_restante: cantidad, precio_apertura: precioPromedio, comision_apertura: 0, operacion_apertura_id: null };
   try{
-    await sb.from('posiciones_fondo').insert(row);
-    await cargarPosiciones();
+    await sb.from('lotes_fondo').insert(loteRow);
+    await cargarLotes();
+    await actualizarPrecioCache(datos, isNaN(precioActual)?precioPromedio:precioActual);
     document.getElementById('form-posicion-container').innerHTML='';
     msg.className='msg ok'; msg.textContent='Posición agregada.';
     showCarteraFondo();
@@ -701,17 +770,11 @@ async function guardarPosicionManual(){
   }
 }
 
-async function eliminarPosicion(id){
-  if(!confirm('¿Eliminar esta posición de la cartera?')) return;
-  await sb.from('posiciones_fondo').delete().eq('id', id);
-  await cargarPosiciones();
-  showCarteraFondo();
-}
-
 async function actualizarCotizacionesFondo(){
   const msg = document.getElementById('cartera-msg');
   msg.className='msg'; msg.textContent='Actualizando cotizaciones...';
-  const tickers = [...new Set(POSICIONES.filter(p=>p.tipoActivo==='Acción' && p.cantidad!==0).map(p=>p.ticker))];
+  const posiciones = posicionesAgregadas().filter(p=>p.tipoActivo==='Acción');
+  const tickers = [...new Set(posiciones.map(p=>p.ticker))];
   if(tickers.length===0){ msg.className='msg'; msg.textContent='No hay acciones en cartera para actualizar.'; return; }
   let actualizados = 0;
   for(const t of tickers){
@@ -719,9 +782,8 @@ async function actualizarCotizacionesFondo(){
       const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_API_KEY}`);
       const data = await res.json();
       if(data && data.c){
-        for(const p of POSICIONES.filter(p=>p.ticker===t && p.tipoActivo==='Acción')){
-          p.precioActual = data.c;
-          if(p.id) await sb.from('posiciones_fondo').update({ precio_actual: data.c, fecha_actualizacion: new Date().toISOString() }).eq('id', p.id);
+        for(const p of posiciones.filter(p=>p.ticker===t)){
+          await actualizarPrecioCache(p, data.c);
         }
         actualizados++;
       }
@@ -830,6 +892,14 @@ async function guardarOperacion(){
   const strike = tipoActivo==='Opción' ? (parseFloat(String(document.getElementById('op-strike').value).replace(',','.'))||null) : null;
   const vencimiento = tipoActivo==='Opción' ? (document.getElementById('op-vencimiento').value||null) : null;
   const op = { id: uid(), fecha, tipoActivo, ticker, subyacente, tipoOpcion, strike, vencimiento, tipoOperacion, cantidad, precio, comision, notas };
+  if(tipoOperacion==='Venta'){
+    const clave = clavePosicion(op);
+    const disponible = LOTES.filter(l=>clavePosicion(l)===clave && l.cantidadRestante>0).reduce((s,l)=>s+l.cantidadRestante,0);
+    if(cantidad > disponible + 1e-9){
+      msg.className='msg err'; msg.textContent=`No hay suficiente cantidad en cartera para vender (disponible: ${fmtNum(disponible)}). El fondo no opera en corto.`;
+      return;
+    }
+  }
   try{
     await sb.from('operaciones_fondo').insert({
       id: op.id, fondo_id: FONDO_ID, fecha: op.fecha, tipo_activo: op.tipoActivo, ticker: op.ticker,
@@ -840,42 +910,50 @@ async function guardarOperacion(){
     await cargarOperaciones();
     await cargarPosiciones();
     await cargarLiquidez();
+    await cargarLotes();
+    await cargarResultados();
     msg.className='msg ok'; msg.textContent='Operación registrada y cartera actualizada.';
     showOperacionesFondo();
   }catch(e){
-    msg.className='msg err'; msg.textContent='Error al guardar la operación.';
+    msg.className='msg err'; msg.textContent='Error al guardar la operación: '+(e.message||e);
   }
 }
 
+function diasEntre(f1,f2){ return Math.round((new Date(f2)-new Date(f1))/86400000); }
+
 async function aplicarOperacionACartera(op){
-  const opKey = clavePosicion(op);
-  let pos = POSICIONES.find(p=>clavePosicion(p)===opKey);
-  const esCompra = op.tipoOperacion==='Compra';
-  if(!pos){
-    pos = { id:null, tipoActivo: op.tipoActivo, ticker: op.ticker, subyacente: op.subyacente, tipoOpcion: op.tipoOpcion, strike: op.strike, vencimiento: op.vencimiento, cantidad:0, precioPromedio:0, precioActual: op.precio };
-    POSICIONES.push(pos);
-  }
-  if(esCompra){
-    const costoTotal = (pos.cantidad*(pos.precioPromedio||0)) + (op.cantidad*op.precio);
-    pos.cantidad += op.cantidad;
-    pos.precioPromedio = pos.cantidad>0 ? costoTotal/pos.cantidad : 0;
-  } else {
-    pos.cantidad -= op.cantidad;
-  }
-  pos.precioActual = op.precio;
-  const row = { fondo_id: FONDO_ID, tipo_activo: pos.tipoActivo, ticker: pos.ticker, subyacente: pos.subyacente, tipo_opcion: pos.tipoOpcion, strike: pos.strike, vencimiento: pos.vencimiento, cantidad: pos.cantidad, precio_promedio: pos.precioPromedio, precio_actual: pos.precioActual, fecha_actualizacion: new Date().toISOString() };
-  if(pos.id){
-    await sb.from('posiciones_fondo').update(row).eq('id', pos.id);
-  } else {
-    const { data } = await sb.from('posiciones_fondo').insert(row).select().single();
-    if(data) pos.id = data.id;
-  }
+  const clave = clavePosicion(op);
   const mult = op.tipoActivo==='Opción' ? 100 : 1;
-  const bruto = op.cantidad*op.precio*mult;
-  const delta = esCompra ? -(bruto+op.comision) : (bruto-op.comision);
-  const nuevoSaldo = (LIQUIDEZ.saldo||0) + delta;
-  LIQUIDEZ.saldo = nuevoSaldo;
-  await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+  const esCompra = op.tipoOperacion==='Compra';
+  if(esCompra){
+    const loteRow = { fondo_id: FONDO_ID, tipo_activo: op.tipoActivo, ticker: op.ticker, subyacente: op.subyacente, tipo_opcion: op.tipoOpcion, strike: op.strike, vencimiento: op.vencimiento, fecha_apertura: op.fecha, cantidad_original: op.cantidad, cantidad_restante: op.cantidad, precio_apertura: op.precio, comision_apertura: op.comision, operacion_apertura_id: op.id };
+    const { data } = await sb.from('lotes_fondo').insert(loteRow).select().single();
+    if(data) LOTES.push({ id:data.id, tipoActivo:data.tipo_activo, ticker:data.ticker, subyacente:data.subyacente, tipoOpcion:data.tipo_opcion, strike:data.strike, vencimiento:data.vencimiento, fechaApertura:data.fecha_apertura, cantidadOriginal:data.cantidad_original, cantidadRestante:data.cantidad_restante, precioApertura:data.precio_apertura, comisionApertura:data.comision_apertura, operacionAperturaId:data.operacion_apertura_id });
+    await actualizarPrecioCache(op, op.precio);
+    const costo = op.cantidad*op.precio*mult + op.comision;
+    LIQUIDEZ.saldo = (LIQUIDEZ.saldo||0) - costo;
+  } else {
+    let pendiente = op.cantidad;
+    const lotesAbiertos = LOTES.filter(l=>clavePosicion(l)===clave && l.cantidadRestante>0).sort((a,b)=>new Date(a.fechaApertura)-new Date(b.fechaApertura));
+    const disponible = lotesAbiertos.reduce((s,l)=>s+l.cantidadRestante,0);
+    if(pendiente > disponible + 1e-9) throw new Error('No hay suficiente cantidad en cartera para vender. El fondo no opera en corto.');
+    for(const lote of lotesAbiertos){
+      if(pendiente<=1e-9) break;
+      const porcion = Math.min(lote.cantidadRestante, pendiente);
+      const comisionAperturaProrateada = lote.comisionApertura * (porcion/lote.cantidadOriginal);
+      const comisionCierreProrateada = op.comision * (porcion/op.cantidad);
+      const resultado = (op.precio - lote.precioApertura)*porcion*mult - comisionAperturaProrateada - comisionCierreProrateada;
+      const resultadoRow = { fondo_id: FONDO_ID, tipo_activo: op.tipoActivo, ticker: op.ticker, subyacente: op.subyacente, tipo_opcion: op.tipoOpcion, strike: op.strike, vencimiento: op.vencimiento, fecha_apertura: lote.fechaApertura, fecha_cierre: op.fecha, cantidad: porcion, precio_apertura: lote.precioApertura, precio_cierre: op.precio, comision_apertura: comisionAperturaProrateada, comision_cierre: comisionCierreProrateada, resultado, dias_en_posicion: diasEntre(lote.fechaApertura, op.fecha), operacion_cierre_id: op.id };
+      await sb.from('resultados_realizados_fondo').insert(resultadoRow);
+      lote.cantidadRestante -= porcion;
+      await sb.from('lotes_fondo').update({ cantidad_restante: lote.cantidadRestante }).eq('id', lote.id);
+      pendiente -= porcion;
+    }
+    await actualizarPrecioCache(op, op.precio);
+    const proceeds = op.cantidad*op.precio*mult - op.comision;
+    LIQUIDEZ.saldo = (LIQUIDEZ.saldo||0) + proceeds;
+  }
+  await sb.from('liquidez_fondo').update({ saldo: LIQUIDEZ.saldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
 }
 
 // ---------- ARRANQUE ----------
