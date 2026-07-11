@@ -257,7 +257,7 @@ async function cargarResultados(){
 }
 async function cargarAnalisisOpciones(){
   const { data } = await sb.from('analisis_opciones').select('*').eq('fondo_id', FONDO_ID).order('fecha_analisis',{ascending:false});
-  ANALISIS_OPCIONES = (data||[]).map(r=>({ id:r.id, fechaAnalisis:r.fecha_analisis, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, posicion:r.posicion, strike:r.strike, vencimiento:r.vencimiento, prima:r.prima, contratos:r.contratos, delta:r.delta, gamma:r.gamma, theta:r.theta, vega:r.vega, rho:r.rho, iv:r.iv, volumen:r.volumen, interesAbierto:r.interes_abierto, notas:r.notas }));
+  ANALISIS_OPCIONES = (data||[]).map(r=>({ id:r.id, fechaAnalisis:r.fecha_analisis, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, posicion:r.posicion, strike:r.strike, vencimiento:r.vencimiento, prima:r.prima, contratos:r.contratos, delta:r.delta, gamma:r.gamma, theta:r.theta, vega:r.vega, rho:r.rho, iv:r.iv, volatilidadHistorica:r.volatilidad_historica, volumen:r.volumen, interesAbierto:r.interes_abierto, notas:r.notas }));
 }
 async function cargarTodo(){
   await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados(), cargarAnalisisOpciones()]);
@@ -1008,8 +1008,39 @@ function interpretacionOpcion(item, metricas, precioSubyacente){
     const pctPrima = item.prima ? Math.abs(item.theta/item.prima*100).toFixed(1) : null;
     lineas.push(`Theta ${item.theta}: decaimiento aprox. de US$${Math.abs(item.theta).toFixed(2)} por día por acción${pctPrima?` (~${pctPrima}% de la prima actual).`:'.'}`);
   }
-  if(item.iv!=null) lineas.push(`Volatilidad implícita cargada: ${item.iv}%. No hay IV histórica cargada para compararla contra su rango habitual.`);
+  if(item.iv!=null){
+    lineas.push(item.volatilidadHistorica!=null
+      ? `Volatilidad implícita cargada: ${item.iv}% (ver comparación contra volatilidad histórica en "Señales").`
+      : `Volatilidad implícita cargada: ${item.iv}%. Cargá también la volatilidad histórica realizada para compararla.`);
+  }
   return lineas;
+}
+
+function calcularSenalesOpcion(item, metricas, precioSubyacente){
+  const senales = [];
+  if(item.iv!=null && item.volatilidadHistorica){
+    const ratio = item.iv/item.volatilidadHistorica;
+    if(ratio<0.85) senales.push({ tipo:'favor', texto:`IV (${item.iv}%) está por debajo de la volatilidad histórica cargada (${item.volatilidadHistorica}%) — la prima podría estar relativamente barata en términos de volatilidad.` });
+    else if(ratio>1.15) senales.push({ tipo:'contra', texto:`IV (${item.iv}%) está por encima de la volatilidad histórica cargada (${item.volatilidadHistorica}%) — la prima podría estar relativamente cara.` });
+    else senales.push({ tipo:'neutral', texto:`IV (${item.iv}%) está en línea con la volatilidad histórica cargada (${item.volatilidadHistorica}%) — sin señal clara de sobre/sub-valuación por este lado.` });
+  }
+  if(precioSubyacente!=null && item.prima){
+    const valorIntrinseco = metricas.esCall ? Math.max(precioSubyacente-item.strike,0) : Math.max(item.strike-precioSubyacente,0);
+    const valorExtrinseco = Math.max(item.prima-valorIntrinseco,0);
+    const pctExtrinseco = valorExtrinseco/item.prima*100;
+    if(pctExtrinseco>=70 && metricas.dte>0 && metricas.dte<=14) senales.push({ tipo:'contra', texto:`El ${pctExtrinseco.toFixed(0)}% de la prima es valor tiempo y quedan solo ${metricas.dte} días — riesgo alto de erosión por theta en el corto plazo.` });
+    else if(pctExtrinseco<=30) senales.push({ tipo:'neutral', texto:`Solo el ${pctExtrinseco.toFixed(0)}% de la prima es valor tiempo — la mayor parte ya es valor intrínseco.` });
+    else senales.push({ tipo:'neutral', texto:`El ${pctExtrinseco.toFixed(0)}% de la prima es valor tiempo, con ${metricas.dte} días al vencimiento.` });
+    if(item.theta!=null && valorExtrinseco>0){
+      const thetaPctDiario = Math.abs(item.theta)/valorExtrinseco*100;
+      if(thetaPctDiario>=5) senales.push({ tipo:'contra', texto:`El theta representa ~${thetaPctDiario.toFixed(1)}% del valor tiempo restante por día — erosión acelerada.` });
+    }
+  }
+  if(item.delta!=null){
+    const prob = Math.round(Math.abs(item.delta)*100);
+    senales.push({ tipo:'neutral', texto:`Probabilidad aproximada de vencer ITM (estimada a partir del delta): ~${prob}%.` });
+  }
+  return senales;
 }
 
 function showAnalisisOpciones(){
@@ -1091,6 +1122,8 @@ function showFormAnalisisOpcion(){
         <div><label>Volumen</label><input type="text" id="an-volumen" placeholder="1200"></div>
         <div><label>Interés abierto</label><input type="text" id="an-interesAbierto" placeholder="4500"></div>
       </div>
+      <label>Volatilidad histórica (realizada) % <span style="font-weight:400;color:var(--text2);">— opcional, para comparar contra la IV</span></label>
+      <input type="text" id="an-volatilidadHistorica" placeholder="28">
       <label>Notas</label><textarea id="an-notas" style="height:60px;"></textarea>
       <button class="btn" onclick="guardarAnalisisOpcion()">Guardar análisis</button>
       <button class="btn secondary" onclick="document.getElementById('form-analisis-container').innerHTML=''">Cancelar</button>
@@ -1119,6 +1152,7 @@ async function guardarAnalisisOpcion(){
     delta: numOrNull(document.getElementById('an-delta').value), gamma: numOrNull(document.getElementById('an-gamma').value),
     theta: numOrNull(document.getElementById('an-theta').value), vega: numOrNull(document.getElementById('an-vega').value),
     rho: numOrNull(document.getElementById('an-rho').value), iv: numOrNull(document.getElementById('an-iv').value),
+    volatilidad_historica: numOrNull(document.getElementById('an-volatilidadHistorica').value),
     volumen: numOrNull(document.getElementById('an-volumen').value), interes_abierto: numOrNull(document.getElementById('an-interesAbierto').value),
     notas: document.getElementById('an-notas').value.trim()||null
   };
@@ -1166,6 +1200,9 @@ function showDetalleOpcionAnalisis(id){
   const precioSubyacente = PRECIOS_SUBYACENTES[item.subyacente];
   const metricas = calcularMetricasOpcion(item, precioSubyacente);
   const lecturas = interpretacionOpcion(item, metricas, precioSubyacente);
+  const senales = calcularSenalesOpcion(item, metricas, precioSubyacente);
+  const colorSenal = { favor:'var(--pos, #1a9e5c)', contra:'var(--neg, #c0392b)', neutral:'var(--text2)' };
+  const iconoSenal = { favor:'✓', contra:'⚠', neutral:'·' };
   const centro = precioSubyacente!=null ? precioSubyacente : item.strike;
   const min = Math.min(item.strike, centro)*0.7;
   const max = Math.max(item.strike, centro)*1.3;
@@ -1198,10 +1235,17 @@ function showDetalleOpcionAnalisis(id){
         <div class="f"><div class="f-label">Vega</div>${item.vega??'<span class="na">-</span>'}</div>
         <div class="f"><div class="f-label">Rho</div>${item.rho??'<span class="na">-</span>'}</div>
         <div class="f"><div class="f-label">IV</div>${item.iv!=null?item.iv+'%':'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Volatilidad histórica</div>${item.volatilidadHistorica!=null?item.volatilidadHistorica+'%':'<span class="na">-</span>'}</div>
         <div class="f"><div class="f-label">Volumen</div>${item.volumen??'<span class="na">-</span>'}</div>
         <div class="f"><div class="f-label">Interés abierto</div>${item.interesAbierto??'<span class="na">-</span>'}</div>
         <div class="f"><div class="f-label">Precio subyacente</div>${precioSubyacente!=null?fmtUSD(precioSubyacente):'<span class="na">Actualizalo desde el listado</span>'}</div>
       </div>
+    </div>
+    <div class="panel">
+      <h3>Señales</h3>
+      ${senales.length===0?'<div class="empty">Cargá IV + volatilidad histórica, y actualizá el precio del subyacente, para ver señales de valuación.</div>':`
+      <ul style="list-style:none;padding-left:0;">${senales.map(s=>`<li style="margin-bottom:8px;color:${colorSenal[s.tipo]};"><strong>${iconoSenal[s.tipo]}</strong> ${s.texto}</li>`).join('')}</ul>`}
+      <div class="notebox">Estas señales combinan tus datos cargados (IV, volatilidad histórica, delta, theta, DTE) en lecturas objetivas de valuación y riesgo de tiempo — no son una recomendación de compra o venta.</div>
     </div>
     <div class="panel">
       <h3>Lectura</h3>
