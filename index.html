@@ -136,6 +136,7 @@ tr.clickable:hover td{background:var(--panel2);cursor:pointer;}
     <button class="navbtn" id="nav-cuotapartistas" onclick="showCuotapartistas()">Cuotapartistas</button>
     <button class="navbtn" id="nav-cartera" onclick="showCarteraFondo()">Cartera del Fondo</button>
     <button class="navbtn" id="nav-operaciones" onclick="showOperacionesFondo()">Operaciones</button>
+    <button class="navbtn" id="nav-opciones" onclick="showAnalisisOpciones()">Análisis de Opciones</button>
   </div>
   <div class="main" id="main"></div>
 </div>
@@ -217,6 +218,7 @@ let LIQUIDEZ = { saldo: 0 };
 let VALUACIONES = [];
 let LOTES = [];
 let RESULTADOS = [];
+let ANALISIS_OPCIONES = [];
 
 async function cargarCuotapartistas(){
   const { data } = await sb.from('cuotapartistas').select('*').eq('fondo_id', FONDO_ID);
@@ -253,8 +255,12 @@ async function cargarResultados(){
   const { data } = await sb.from('resultados_realizados_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha_cierre',{ascending:false});
   RESULTADOS = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, fechaApertura:r.fecha_apertura, fechaCierre:r.fecha_cierre, cantidad:r.cantidad, precioApertura:r.precio_apertura, precioCierre:r.precio_cierre, comisionApertura:r.comision_apertura, comisionCierre:r.comision_cierre, resultado:r.resultado, diasEnPosicion:r.dias_en_posicion }));
 }
+async function cargarAnalisisOpciones(){
+  const { data } = await sb.from('analisis_opciones').select('*').eq('fondo_id', FONDO_ID).order('fecha_analisis',{ascending:false});
+  ANALISIS_OPCIONES = (data||[]).map(r=>({ id:r.id, fechaAnalisis:r.fecha_analisis, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, posicion:r.posicion, strike:r.strike, vencimiento:r.vencimiento, prima:r.prima, contratos:r.contratos, delta:r.delta, gamma:r.gamma, theta:r.theta, vega:r.vega, rho:r.rho, iv:r.iv, volumen:r.volumen, interesAbierto:r.interes_abierto, notas:r.notas }));
+}
 async function cargarTodo(){
-  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados()]);
+  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados(), cargarAnalisisOpciones()]);
 }
 
 // ---------- CÁLCULOS DEL FONDO ----------
@@ -302,6 +308,7 @@ function renderTodo(){
   else if(currentView==='ficha') showFichaCuotapartista(currentCuotapartistaId);
   else if(currentView==='cartera') showCarteraFondo();
   else if(currentView==='operaciones') showOperacionesFondo();
+  else if(currentView==='opciones') showAnalisisOpciones();
 }
 
 // ---------- PANEL PRINCIPAL ----------
@@ -954,6 +961,264 @@ async function aplicarOperacionACartera(op){
     LIQUIDEZ.saldo = (LIQUIDEZ.saldo||0) + proceeds;
   }
   await sb.from('liquidez_fondo').update({ saldo: LIQUIDEZ.saldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+}
+
+// ---------- GESTOR DE OPCIONES (workspace de análisis, independiente de la cartera real) ----------
+let PRECIOS_SUBYACENTES = {};
+
+function calcularMetricasOpcion(item, precioSubyacente){
+  const hoy = new Date().toISOString().slice(0,10);
+  const dte = diasEntre(hoy, item.vencimiento);
+  const esCall = item.tipoOpcion==='Call';
+  const esComprada = item.posicion==='Comprada';
+  const mult = 100*(item.contratos||1);
+  const breakeven = esCall ? item.strike+item.prima : item.strike-item.prima;
+  let maxPerdida=null, maxGanancia=null;
+  if(esCall && esComprada){ maxPerdida = item.prima*mult; maxGanancia = null; }
+  else if(esCall && !esComprada){ maxGanancia = item.prima*mult; maxPerdida = null; }
+  else if(!esCall && esComprada){ maxPerdida = item.prima*mult; maxGanancia = Math.max(item.strike-item.prima,0)*mult; }
+  else { maxGanancia = item.prima*mult; maxPerdida = Math.max(item.strike-item.prima,0)*mult; }
+  let moneyness = null;
+  if(precioSubyacente!=null){
+    if(precioSubyacente===item.strike) moneyness='ATM';
+    else if(esCall) moneyness = precioSubyacente>item.strike ? 'ITM' : 'OTM';
+    else moneyness = precioSubyacente<item.strike ? 'ITM' : 'OTM';
+  }
+  return { dte, breakeven, maxPerdida, maxGanancia, moneyness, mult, esCall, esComprada };
+}
+
+function payoffOpcion(item, precioEnVencimiento){
+  const esCall = item.tipoOpcion==='Call';
+  const esComprada = item.posicion==='Comprada';
+  const mult = 100*(item.contratos||1);
+  const valorIntrinseco = esCall ? Math.max(precioEnVencimiento-item.strike,0) : Math.max(item.strike-precioEnVencimiento,0);
+  const pnlPorAccion = esComprada ? (valorIntrinseco-item.prima) : (item.prima-valorIntrinseco);
+  return pnlPorAccion*mult;
+}
+
+function interpretacionOpcion(item, metricas, precioSubyacente){
+  const lineas = [];
+  if(metricas.dte<=0) lineas.push('Esta opción ya venció o vence hoy.');
+  else if(metricas.dte<7) lineas.push(`Quedan ${metricas.dte} días al vencimiento — ventana corta, mayor sensibilidad a theta y gamma.`);
+  else if(metricas.dte<30) lineas.push(`Quedan ${metricas.dte} días al vencimiento.`);
+  else lineas.push(`Quedan ${metricas.dte} días al vencimiento — plazo amplio, decaimiento diario relativo menor por ahora.`);
+  if(metricas.moneyness) lineas.push(`Está ${metricas.moneyness} respecto al precio actual del subyacente (${fmtUSD(precioSubyacente).replace(/<[^>]+>/g,'')}).`);
+  if(item.delta!=null) lineas.push(`Delta ${item.delta}: por cada US$1 que se mueve el subyacente, la opción se mueve aprox. US$${Math.abs(item.delta).toFixed(2)} por acción (~${Math.round(Math.abs(item.delta)*100)} acciones equivalentes por contrato).`);
+  if(item.theta!=null){
+    const pctPrima = item.prima ? Math.abs(item.theta/item.prima*100).toFixed(1) : null;
+    lineas.push(`Theta ${item.theta}: decaimiento aprox. de US$${Math.abs(item.theta).toFixed(2)} por día por acción${pctPrima?` (~${pctPrima}% de la prima actual).`:'.'}`);
+  }
+  if(item.iv!=null) lineas.push(`Volatilidad implícita cargada: ${item.iv}%. No hay IV histórica cargada para compararla contra su rango habitual.`);
+  return lineas;
+}
+
+function showAnalisisOpciones(){
+  currentView='opciones'; setNav('nav-opciones');
+  destroyCharts();
+  const main = document.getElementById('main');
+  const items = ANALISIS_OPCIONES.slice().sort((a,b)=>b.fechaAnalisis.localeCompare(a.fechaAnalisis));
+  main.innerHTML = `
+    <h1>Análisis de Opciones</h1>
+    <p class="subtitle">Workspace de ideas — cargá los datos de la opción (los ves en tu plataforma de bróker) y obtené breakeven, pérdida/ganancia máxima, payoff al vencimiento y una lectura de las griegas. No afecta la cartera real ni la liquidez.</p>
+    <div style="display:flex;gap:10px;margin-bottom:20px;">
+      <button class="btn small" onclick="showFormAnalisisOpcion()">+ Nuevo análisis</button>
+      <button class="btn secondary small" onclick="actualizarPreciosSubyacentesAnalisis()">Actualizar precios de subyacentes</button>
+    </div>
+    <div id="opciones-msg" class="msg"></div>
+    <div id="form-analisis-container"></div>
+    <div class="panel">
+      <h3>Ideas cargadas (${items.length})</h3>
+      ${items.length===0?'<div class="empty">Todavía no cargaste ningún análisis.</div>':`
+      <table>
+        <tr><th>Subyacente</th><th>Tipo</th><th>Posición</th><th class="right">Strike</th><th>Vencimiento</th><th class="right">DTE</th><th class="right">Prima</th><th class="right">Precio subyac.</th><th></th></tr>
+        ${items.map(a=>{
+          const precio = PRECIOS_SUBYACENTES[a.subyacente];
+          const dte = diasEntre(new Date().toISOString().slice(0,10), a.vencimiento);
+          return `
+          <tr style="cursor:pointer;" onclick="showDetalleOpcionAnalisis('${a.id}')">
+            <td class="name">${a.subyacente}</td>
+            <td><span class="badge-mini">${a.tipoOpcion}</span></td>
+            <td>${a.posicion}</td>
+            <td class="right">${fmtUSD(a.strike)}</td>
+            <td>${a.vencimiento}</td>
+            <td class="right">${dte}</td>
+            <td class="right">${fmtUSD(a.prima)}</td>
+            <td class="right">${precio!=null?fmtUSD(precio):'<span class="na">-</span>'}</td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;" onclick="event.stopPropagation();eliminarAnalisisOpcion('${a.id}')">eliminar</span></td>
+          </tr>`;
+        }).join('')}
+      </table>`}
+      <div class="notebox">Hacé clic en una fila para ver el detalle: breakeven, pérdida/ganancia máxima, gráfico de payoff al vencimiento y lectura de las griegas.</div>
+    </div>
+  `;
+}
+
+function showFormAnalisisOpcion(){
+  const el = document.getElementById('form-analisis-container');
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Nuevo análisis de opción</h4>
+      <div class="formrow">
+        <div><label>Fecha de análisis</label><input type="date" id="an-fecha" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Subyacente</label><input type="text" id="an-subyacente" placeholder="AAPL"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Tipo</label><select id="an-tipoOpcion"><option value="Call">Call</option><option value="Put">Put</option></select></div>
+        <div><label>Posición</label><select id="an-posicion"><option value="Comprada">Comprada</option><option value="Vendida">Vendida</option></select></div>
+      </div>
+      <div class="formrow">
+        <div><label>Strike</label><input type="text" id="an-strike" placeholder="150"></div>
+        <div><label>Vencimiento</label><input type="date" id="an-vencimiento"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Prima</label><input type="text" id="an-prima" placeholder="3.50"></div>
+        <div><label>Contratos</label><input type="text" id="an-contratos" placeholder="1" value="1"></div>
+      </div>
+      <div class="hint" style="margin-top:0;">Griegas, IV, volumen e interés abierto: los ves en la cadena de opciones de tu plataforma de bróker. Todos opcionales.</div>
+      <div class="formrow">
+        <div><label>Delta</label><input type="text" id="an-delta" placeholder="0.45"></div>
+        <div><label>Gamma</label><input type="text" id="an-gamma" placeholder="0.03"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Theta</label><input type="text" id="an-theta" placeholder="-0.08"></div>
+        <div><label>Vega</label><input type="text" id="an-vega" placeholder="0.12"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Rho</label><input type="text" id="an-rho" placeholder="0.02"></div>
+        <div><label>IV %</label><input type="text" id="an-iv" placeholder="35"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Volumen</label><input type="text" id="an-volumen" placeholder="1200"></div>
+        <div><label>Interés abierto</label><input type="text" id="an-interesAbierto" placeholder="4500"></div>
+      </div>
+      <label>Notas</label><textarea id="an-notas" style="height:60px;"></textarea>
+      <button class="btn" onclick="guardarAnalisisOpcion()">Guardar análisis</button>
+      <button class="btn secondary" onclick="document.getElementById('form-analisis-container').innerHTML=''">Cancelar</button>
+    </div>
+  `;
+}
+
+function numOrNull(v){ const n = parseFloat(String(v).replace(',','.')); return isNaN(n)?null:n; }
+
+async function guardarAnalisisOpcion(){
+  const msg = document.getElementById('opciones-msg');
+  const fechaAnalisis = document.getElementById('an-fecha').value;
+  const subyacente = document.getElementById('an-subyacente').value.trim().toUpperCase();
+  const tipoOpcion = document.getElementById('an-tipoOpcion').value;
+  const posicion = document.getElementById('an-posicion').value;
+  const strike = numOrNull(document.getElementById('an-strike').value);
+  const vencimiento = document.getElementById('an-vencimiento').value;
+  const prima = numOrNull(document.getElementById('an-prima').value);
+  const contratos = numOrNull(document.getElementById('an-contratos').value) || 1;
+  if(!subyacente){ msg.className='msg err'; msg.textContent='Ingresá el subyacente.'; return; }
+  if(!vencimiento){ msg.className='msg err'; msg.textContent='Ingresá el vencimiento.'; return; }
+  if(strike==null){ msg.className='msg err'; msg.textContent='Ingresá el strike.'; return; }
+  if(prima==null){ msg.className='msg err'; msg.textContent='Ingresá la prima.'; return; }
+  const row = {
+    id: uid(), fondo_id: FONDO_ID, fecha_analisis: fechaAnalisis, subyacente, tipo_opcion: tipoOpcion, posicion, strike, vencimiento, prima, contratos,
+    delta: numOrNull(document.getElementById('an-delta').value), gamma: numOrNull(document.getElementById('an-gamma').value),
+    theta: numOrNull(document.getElementById('an-theta').value), vega: numOrNull(document.getElementById('an-vega').value),
+    rho: numOrNull(document.getElementById('an-rho').value), iv: numOrNull(document.getElementById('an-iv').value),
+    volumen: numOrNull(document.getElementById('an-volumen').value), interes_abierto: numOrNull(document.getElementById('an-interesAbierto').value),
+    notas: document.getElementById('an-notas').value.trim()||null
+  };
+  try{
+    await sb.from('analisis_opciones').insert(row);
+    await cargarAnalisisOpciones();
+    document.getElementById('form-analisis-container').innerHTML='';
+    msg.className='msg ok'; msg.textContent='Análisis guardado.';
+    showAnalisisOpciones();
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar el análisis.';
+  }
+}
+
+async function eliminarAnalisisOpcion(id){
+  if(!confirm('¿Eliminar este análisis?')) return;
+  await sb.from('analisis_opciones').delete().eq('id', id);
+  await cargarAnalisisOpciones();
+  showAnalisisOpciones();
+}
+
+async function actualizarPreciosSubyacentesAnalisis(){
+  const msg = document.getElementById('opciones-msg');
+  msg.className='msg'; msg.textContent='Actualizando precios...';
+  const tickers = [...new Set(ANALISIS_OPCIONES.map(a=>a.subyacente))];
+  if(tickers.length===0){ msg.className='msg'; msg.textContent='No hay análisis cargados.'; return; }
+  let actualizados = 0;
+  for(const t of tickers){
+    try{
+      const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_API_KEY}`);
+      const data = await res.json();
+      if(data && data.c){ PRECIOS_SUBYACENTES[t] = data.c; actualizados++; }
+    }catch(e){}
+  }
+  msg.className='msg ok'; msg.textContent = actualizados+' de '+tickers.length+' precios actualizados.';
+  showAnalisisOpciones();
+}
+
+function showDetalleOpcionAnalisis(id){
+  currentView='opciones-detalle'; setNav(null);
+  destroyCharts();
+  const item = ANALISIS_OPCIONES.find(a=>a.id===id);
+  const main = document.getElementById('main');
+  if(!item){ showAnalisisOpciones(); return; }
+  const precioSubyacente = PRECIOS_SUBYACENTES[item.subyacente];
+  const metricas = calcularMetricasOpcion(item, precioSubyacente);
+  const lecturas = interpretacionOpcion(item, metricas, precioSubyacente);
+  const centro = precioSubyacente!=null ? precioSubyacente : item.strike;
+  const min = Math.min(item.strike, centro)*0.7;
+  const max = Math.max(item.strike, centro)*1.3;
+  const pasos = 40;
+  const precios = Array.from({length:pasos+1}, (_,i)=>min+(max-min)*i/pasos);
+  main.innerHTML = `
+    <div class="clientdetail-header">
+      <h1>${item.subyacente} ${item.tipoOpcion} ${fmtUSD(item.strike).replace(/<[^>]+>/g,'')} — ${item.posicion}</h1>
+      <div class="actions">
+        <button class="btn secondary small" onclick="showAnalisisOpciones()">← Volver al listado</button>
+      </div>
+    </div>
+    <p class="subtitle">Vencimiento ${item.vencimiento} · Prima ${fmtUSD(item.prima)} · ${item.contratos||1} contrato(s)</p>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Días al vencimiento</div><div class="kpi-value">${metricas.dte}</div></div>
+      <div class="kpi"><div class="kpi-label">Breakeven</div><div class="kpi-value">${fmtUSD(metricas.breakeven)}</div></div>
+      <div class="kpi"><div class="kpi-label">Pérdida máxima</div><div class="kpi-value">${metricas.maxPerdida!=null?fmtUSD(metricas.maxPerdida):'Ilimitada'}</div></div>
+      <div class="kpi"><div class="kpi-label">Ganancia máxima</div><div class="kpi-value">${metricas.maxGanancia!=null?fmtUSD(metricas.maxGanancia):'Ilimitada'}</div></div>
+    </div>
+    <div class="panel">
+      <h3>Payoff al vencimiento</h3>
+      <div style="position:relative;height:280px;"><canvas id="chart-payoff"></canvas></div>
+    </div>
+    <div class="panel">
+      <h3>Griegas y datos de mercado</h3>
+      <div class="fichagrid">
+        <div class="f"><div class="f-label">Delta</div>${item.delta??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Gamma</div>${item.gamma??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Theta</div>${item.theta??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Vega</div>${item.vega??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Rho</div>${item.rho??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">IV</div>${item.iv!=null?item.iv+'%':'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Volumen</div>${item.volumen??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Interés abierto</div>${item.interesAbierto??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Precio subyacente</div>${precioSubyacente!=null?fmtUSD(precioSubyacente):'<span class="na">Actualizalo desde el listado</span>'}</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Lectura</h3>
+      <ul>${lecturas.map(l=>`<li>${l}</li>`).join('')}</ul>
+      ${item.notas?`<div class="notebox">Notas: ${item.notas}</div>`:''}
+      <div class="notebox">Esta lectura describe mecánica y sensibilidad de la posición a partir de los datos cargados — no es una recomendación de inversión.</div>
+    </div>
+  `;
+  const ctx = document.getElementById('chart-payoff');
+  const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text2').trim();
+  const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+  const chart = new Chart(ctx, {
+    type:'line',
+    data:{ labels: precios.map(p=>p.toFixed(2)), datasets:[{ label:'P&L al vencimiento (US$)', data: precios.map(p=>payoffOpcion(item,p)), borderColor:'#C9A24B', backgroundColor:'transparent', pointRadius:0, borderWidth:2, tension:0 }] },
+    options:{ responsive:true, maintainAspectRatio:false, scales:{ x:{ title:{display:true,text:'Precio del subyacente',color:textColor}, ticks:{color:textColor, maxTicksLimit:8}, grid:{color:gridColor} }, y:{ ticks:{color:textColor, callback:v=>'US$'+v}, grid:{color:gridColor} } }, plugins:{ legend:{display:false} } }
+  });
+  chartRefs.push(chart);
 }
 
 // ---------- ARRANQUE ----------
