@@ -864,6 +864,7 @@ function showCarteraFondo(){
   destroyCharts();
   const main = document.getElementById('main');
   const activas = posicionesAgregadas().sort((a,b)=>valorMercadoPosicion(b)-valorMercadoPosicion(a));
+  window.__carteraPosiciones = activas; // para que showFormEditarPosicion encuentre la posición por índice
   const resultados = RESULTADOS;
   main.innerHTML = `
     <h1>Cartera del Fondo</h1>
@@ -885,8 +886,8 @@ function showCarteraFondo(){
       <h3>Posiciones</h3>
       ${activas.length===0?'<div class="empty">Todavía no hay posiciones cargadas.</div>':`
       <table>
-        <tr><th>Ticker</th><th>Tipo</th><th>Detalle</th><th class="right">Cantidad</th><th class="right">Precio prom.</th><th class="right">Precio actual</th><th class="right">Valor mercado</th></tr>
-        ${activas.map(p=>{
+        <tr><th>Ticker</th><th>Tipo</th><th>Detalle</th><th class="right">Cantidad</th><th class="right">Precio prom.</th><th class="right">Precio actual</th><th class="right">Valor mercado</th><th></th></tr>
+        ${activas.map((p,idx)=>{
           const detalle = p.tipoActivo==='Opción' ? `${p.subyacente||''} ${p.tipoOpcion||''} ${p.strike||''} · ${p.vencimiento||''}` : '-';
           return `
           <tr>
@@ -897,6 +898,7 @@ function showCarteraFondo(){
             <td class="right">${fmtUSD(p.precioPromedio)}</td>
             <td class="right">${fmtUSD(p.precioActual)}</td>
             <td class="right">${fmtUSD(valorMercadoPosicion(p))}</td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--gold);" onclick="showFormEditarPosicion(${idx})">editar</span></td>
           </tr>`;
         }).join('')}
       </table>`}
@@ -1007,6 +1009,96 @@ async function guardarPosicionManual(){
     showCarteraFondo();
   }catch(e){
     msg.className='msg err'; msg.textContent='Error al guardar la posición.';
+  }
+}
+
+// ---------- EDITAR POSICIÓN (precio actual + lotes de compra que la componen) ----------
+function showFormEditarPosicion(idx){
+  const p = (window.__carteraPosiciones||[])[idx];
+  if(!p) return;
+  const clave = clavePosicion(p);
+  const lotesAbiertos = LOTES.filter(l=>clavePosicion(l)===clave && l.cantidadRestante>0).sort((a,b)=>new Date(a.fechaApertura)-new Date(b.fechaApertura));
+  const detalle = p.tipoActivo==='Opción' ? ` ${p.tipoOpcion} ${p.strike} · ${p.vencimiento}` : '';
+  const el = document.getElementById('form-posicion-container');
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Editar posición: ${p.ticker}${detalle}</h4>
+      <div class="formrow">
+        <div><label>Precio actual (caché de mercado)</label><input type="text" id="posedit-precioActual" value="${p.precioActual??''}"></div>
+        <div style="display:flex;align-items:end;"><button class="btn secondary small" onclick="guardarPrecioActualPosicion(${idx})">Actualizar precio actual</button></div>
+      </div>
+      <h4>Lotes de compra abiertos</h4>
+      <div class="hint" style="margin-top:0;">La cantidad y el precio promedio de la posición se calculan sumando estos lotes.</div>
+      ${lotesAbiertos.length===0 ? '<div class="empty">No hay lotes abiertos para este instrumento.</div>' : lotesAbiertos.map(l=>{
+        const sinTocar = l.cantidadRestante===l.cantidadOriginal;
+        return `
+        <div class="formrow" style="align-items:end;margin-bottom:10px;">
+          <div><label>Fecha apertura</label><input type="date" id="lote-fecha-${l.id}" value="${l.fechaApertura}"></div>
+          <div><label>Cantidad${sinTocar?'':' (no editable — ya tiene ventas parciales)'}</label><input type="text" id="lote-cantidad-${l.id}" value="${l.cantidadRestante}" ${sinTocar?'':'disabled'}></div>
+        </div>
+        <div class="formrow" style="align-items:end;margin-bottom:16px;">
+          <div><label>Precio de compra</label><input type="text" id="lote-precio-${l.id}" value="${l.precioApertura}"></div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn small" onclick="guardarEdicionLote('${l.id}')">Guardar lote</button>
+            <button class="btn secondary small" style="color:var(--loss);" onclick="eliminarLote('${l.id}')">Eliminar lote</button>
+          </div>
+        </div>`;
+      }).join('')}
+      <button class="btn secondary" onclick="document.getElementById('form-posicion-container').innerHTML=''">Cerrar</button>
+      <div id="posedit-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+async function guardarPrecioActualPosicion(idx){
+  const p = (window.__carteraPosiciones||[])[idx];
+  if(!p) return;
+  const msg = document.getElementById('posedit-msg');
+  const precio = parseFloat(String(document.getElementById('posedit-precioActual').value).replace(',','.'));
+  if(isNaN(precio)){ msg.className='msg err'; msg.textContent='Ingresá un precio válido.'; return; }
+  try{
+    await actualizarPrecioCache(p, precio);
+    msg.className='msg ok'; msg.textContent='Precio actualizado.';
+    setTimeout(()=>showCarteraFondo(), 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al actualizar el precio.';
+  }
+}
+
+async function guardarEdicionLote(loteId){
+  const msg = document.getElementById('posedit-msg');
+  const l = LOTES.find(x=>x.id===loteId);
+  if(!l) return;
+  const fecha = document.getElementById(`lote-fecha-${loteId}`).value;
+  const precio = parseFloat(String(document.getElementById(`lote-precio-${loteId}`).value).replace(',','.'));
+  const sinTocar = l.cantidadRestante===l.cantidadOriginal;
+  const update = { fecha_apertura: fecha, precio_apertura: precio };
+  if(sinTocar){
+    const cantidad = parseFloat(String(document.getElementById(`lote-cantidad-${loteId}`).value).replace(',','.'));
+    if(isNaN(cantidad)||cantidad<=0){ msg.className='msg err'; msg.textContent='Ingresá una cantidad válida.'; return; }
+    update.cantidad_original = cantidad;
+    update.cantidad_restante = cantidad;
+  }
+  if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
+  if(isNaN(precio)||precio<0){ msg.className='msg err'; msg.textContent='Ingresá un precio de compra válido.'; return; }
+  try{
+    await sb.from('lotes_fondo').update(update).eq('id', loteId);
+    await cargarLotes();
+    msg.className='msg ok'; msg.textContent='Lote actualizado.';
+    setTimeout(()=>showCarteraFondo(), 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar el lote.';
+  }
+}
+
+async function eliminarLote(loteId){
+  if(!confirm('¿Eliminar este lote de compra? Esta acción no se puede deshacer.')) return;
+  try{
+    await sb.from('lotes_fondo').delete().eq('id', loteId);
+    await cargarLotes();
+    showCarteraFondo();
+  }catch(e){
+    alert('Error al eliminar el lote.');
   }
 }
 
