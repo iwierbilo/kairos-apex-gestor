@@ -1246,11 +1246,12 @@ async function recalcularValuacion(){
   if(cuotapartes<=0){ msg.className='msg err'; msg.textContent='Todavía no hay cuotapartes en circulación — registrá la primera suscripción.'; return; }
   const valor = patrimonio/cuotapartes;
   try{
-    await sb.from('valuaciones_fondo').insert({ fondo_id: FONDO_ID, fecha: new Date().toISOString().slice(0,10), patrimonio_total: patrimonio, cuotapartes_totales: cuotapartes, valor_cuotaparte: valor });
+    const { error } = await sb.from('valuaciones_fondo').upsert({ fondo_id: FONDO_ID, fecha: new Date().toISOString().slice(0,10), patrimonio_total: patrimonio, cuotapartes_totales: cuotapartes, valor_cuotaparte: valor }, { onConflict: 'fondo_id,fecha' });
+    if(error) throw error;
     await cargarValuaciones();
     msg.className='msg ok'; msg.textContent='Valor de cuotaparte recalculado: '+fmtUSD(valor).replace(/<[^>]+>/g,'');
   }catch(e){
-    msg.className='msg err'; msg.textContent='Error al guardar la valuación.';
+    msg.className='msg err'; msg.textContent='Error al guardar la valuación — revisá que se haya corrido migration_valuacion_diaria.sql (agrega la restricción única fondo_id+fecha que necesita este upsert).';
   }
 }
 
