@@ -373,7 +373,7 @@ function showCuotapartistas(){
     ${ids.length===0?'<div class="empty">Todavía no cargaste ningún cuotapartista.</div>':`
     <div class="panel">
       <table>
-        <tr><th>Nombre</th><th>Tipo</th><th class="right">Cuotapartes</th><th class="right">Valor actual</th><th>Estado</th></tr>
+        <tr><th>Nombre</th><th>Tipo</th><th class="right">Cuotapartes</th><th class="right">Valor actual</th><th>Estado</th><th></th></tr>
         ${ids.map(id=>{
           const cp = CUOTAPARTISTAS[id];
           const tenencia = tenenciaCuotapartista(id);
@@ -385,6 +385,7 @@ function showCuotapartistas(){
             <td class="right">${fmtNum(tenencia)}</td>
             <td class="right">${valor!=null?fmtUSD(valor):'<span class="na">N/D</span>'}</td>
             <td><span class="tag">${cp.estado}</span></td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--loss);" onclick="event.stopPropagation(); eliminarCuotapartista('${id}')">eliminar</span></td>
           </tr>`;
         }).join('')}
       </table>
@@ -560,6 +561,30 @@ async function guardarCuotapartista(id){
     setTimeout(()=>showFichaCuotapartista(cuotapartistaId), 300);
   }catch(e){
     msg.className='msg err'; msg.textContent='Error al guardar.';
+  }
+}
+
+async function eliminarCuotapartista(id){
+  const cp = CUOTAPARTISTAS[id];
+  if(!cp) return;
+  const movs = MOVIMIENTOS.filter(m=>m.cuotapartistaId===id);
+  const detalle = movs.length>0 ? ` Esto borra también su historial de ${movs.length} movimiento(s) y ajusta la liquidez del fondo.` : '';
+  if(!confirm(`¿Eliminar a ${displayNombre(cp)}?${detalle} Esta acción no se puede deshacer.`)) return;
+  try{
+    // Los movimientos del cuotapartista se borran en cascada (FK on delete cascade);
+    // acá revertimos su efecto neto sobre la liquidez del fondo antes de borrar.
+    const netoContribucion = movs.reduce((acc,m)=> acc + (m.tipo==='Suscripción'?m.monto:-m.monto), 0);
+    await sb.from('cuotapartistas').delete().eq('id', id);
+    if(netoContribucion !== 0){
+      const nuevoSaldo = (LIQUIDEZ.saldo||0) - netoContribucion;
+      await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    }
+    await cargarCuotapartistas();
+    await cargarMovimientos();
+    await cargarLiquidez();
+    showCuotapartistas();
+  }catch(e){
+    alert('Error al eliminar el cuotapartista.');
   }
 }
 
