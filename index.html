@@ -610,7 +610,7 @@ function showFichaCuotapartista(id){
       <h3>Historial de movimientos</h3>
       ${movs.length===0?'<div class="empty">Todavía no tiene movimientos registrados.</div>':`
       <table>
-        <tr><th>Fecha</th><th>Tipo</th><th class="right">Monto</th><th class="right">Valor cuotaparte</th><th class="right">Cuotapartes</th><th>Comprobante</th></tr>
+        <tr><th>Fecha</th><th>Tipo</th><th class="right">Monto</th><th class="right">Valor cuotaparte</th><th class="right">Cuotapartes</th><th>Comprobante</th><th></th></tr>
         ${movs.map(m=>`
           <tr>
             <td>${m.fecha}</td>
@@ -619,6 +619,7 @@ function showFichaCuotapartista(id){
             <td class="right">${fmtUSD(m.valorCuotaparte)}</td>
             <td class="right">${fmtNum(m.cantidadCuotapartes)}</td>
             <td><span class="del" style="opacity:1;cursor:pointer;color:var(--gold);" onclick="imprimirComprobante('${m.id}')">${m.numeroComprobante||'ver'}</span></td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;" onclick="showFormEditarMovimiento('${m.id}')">editar</span></td>
           </tr>`).join('')}
       </table>`}
     </div>
@@ -707,6 +708,95 @@ async function guardarMovimiento(cuotapartistaId){
     setTimeout(()=>{ showFichaCuotapartista(cuotapartistaId); imprimirComprobante(movId); }, 300);
   }catch(e){
     msg.className='msg err'; msg.textContent='Error al guardar el movimiento.';
+  }
+}
+
+// ---------- EDITAR / ELIMINAR MOVIMIENTO ----------
+function showFormEditarMovimiento(movId){
+  const m = MOVIMIENTOS.find(x=>x.id===movId);
+  if(!m) return;
+  const el = document.getElementById('ficha-cp-extra');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Editar movimiento ${m.numeroComprobante||''}</h4>
+      <div class="formrow">
+        <div><label>Fecha</label><input type="date" id="editmov-fecha" value="${m.fecha}"></div>
+        <div><label>Tipo</label><select id="editmov-tipo"><option value="Suscripción" ${m.tipo==='Suscripción'?'selected':''}>Suscripción</option><option value="Rescate" ${m.tipo==='Rescate'?'selected':''}>Rescate</option></select></div>
+      </div>
+      <div class="formrow">
+        <div><label>Monto (US$)</label><input type="text" id="editmov-monto" value="${m.monto}" oninput="recalcularCantidadEditMovimiento()"></div>
+        <div><label>Valor de cuotaparte</label><input type="text" id="editmov-valor" value="${m.valorCuotaparte}" oninput="recalcularCantidadEditMovimiento()"></div>
+      </div>
+      <label>Cantidad de cuotapartes</label><input type="text" id="editmov-cantidad" value="${m.cantidadCuotapartes}">
+      <div class="hint">Cantidad = Monto ÷ Valor de cuotaparte, recalculada automáticamente al cambiar esos dos campos. También podés escribirla a mano si necesitás corregirla sola.</div>
+      <label>Notas</label><textarea id="editmov-notas" style="height:60px;">${m.notas||''}</textarea>
+      <button class="btn" onclick="guardarEdicionMovimiento('${movId}')">Guardar cambios</button>
+      <button class="btn secondary" onclick="document.getElementById('ficha-cp-extra').innerHTML=''">Cancelar</button>
+      <button class="btn secondary" style="color:var(--loss);" onclick="eliminarMovimiento('${movId}')">Eliminar movimiento</button>
+      <div id="editmov-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+function recalcularCantidadEditMovimiento(){
+  const monto = parseFloat(String(document.getElementById('editmov-monto').value).replace(',','.'));
+  const valor = parseFloat(String(document.getElementById('editmov-valor').value).replace(',','.'));
+  if(!isNaN(monto) && !isNaN(valor) && valor>0){
+    document.getElementById('editmov-cantidad').value = (monto/valor).toFixed(4);
+  }
+}
+
+async function guardarEdicionMovimiento(movId){
+  const msg = document.getElementById('editmov-msg');
+  const m = MOVIMIENTOS.find(x=>x.id===movId);
+  if(!m) return;
+  const fecha = document.getElementById('editmov-fecha').value;
+  const tipo = document.getElementById('editmov-tipo').value;
+  const monto = parseFloat(String(document.getElementById('editmov-monto').value).replace(',','.'));
+  const valorCuotaparte = parseFloat(String(document.getElementById('editmov-valor').value).replace(',','.'));
+  const cantidadCuotapartes = parseFloat(String(document.getElementById('editmov-cantidad').value).replace(',','.'));
+  const notas = document.getElementById('editmov-notas').value.trim();
+  if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
+  if(isNaN(monto)||monto<=0){ msg.className='msg err'; msg.textContent='Ingresá un monto válido.'; return; }
+  if(isNaN(valorCuotaparte)||valorCuotaparte<=0){ msg.className='msg err'; msg.textContent='Ingresá un valor de cuotaparte válido.'; return; }
+  if(isNaN(cantidadCuotapartes)||cantidadCuotapartes<=0){ msg.className='msg err'; msg.textContent='Ingresá una cantidad de cuotapartes válida.'; return; }
+  try{
+    await sb.from('movimientos_cuotapartes').update({
+      fecha, tipo, monto, valor_cuotaparte: valorCuotaparte, cantidad_cuotapartes: cantidadCuotapartes, notas: notas||null
+    }).eq('id', movId);
+    // La liquidez del fondo se movió en base al monto/tipo original — ajustamos solo la diferencia.
+    const contribucionAntes = m.tipo==='Suscripción' ? m.monto : -m.monto;
+    const contribucionAhora = tipo==='Suscripción' ? monto : -monto;
+    const delta = contribucionAhora - contribucionAntes;
+    if(delta !== 0){
+      const nuevoSaldo = (LIQUIDEZ.saldo||0) + delta;
+      await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    }
+    await cargarMovimientos();
+    await cargarLiquidez();
+    msg.className='msg ok'; msg.textContent='Movimiento actualizado.';
+    setTimeout(()=>showFichaCuotapartista(m.cuotapartistaId), 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar los cambios.';
+  }
+}
+
+async function eliminarMovimiento(movId){
+  const m = MOVIMIENTOS.find(x=>x.id===movId);
+  if(!m) return;
+  if(!confirm(`¿Eliminar el movimiento de ${m.tipo.toLowerCase()} por ${fmtUSD(m.monto).replace(/<[^>]+>/g,'')} del ${m.fecha}? Esto también revierte su efecto en la liquidez del fondo.`)) return;
+  const msg = document.getElementById('editmov-msg');
+  try{
+    await sb.from('movimientos_cuotapartes').delete().eq('id', movId);
+    const contribucion = m.tipo==='Suscripción' ? m.monto : -m.monto;
+    const nuevoSaldo = (LIQUIDEZ.saldo||0) - contribucion;
+    await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    await cargarMovimientos();
+    await cargarLiquidez();
+    showFichaCuotapartista(m.cuotapartistaId);
+  }catch(e){
+    if(msg){ msg.className='msg err'; msg.textContent='Error al eliminar el movimiento.'; }
   }
 }
 
