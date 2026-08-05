@@ -666,13 +666,12 @@ function showFichaCuotapartista(id){
       ${composicion.length===0?'<div class="empty">Todavía no hay posiciones cargadas.</div>':`
       <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;">
         <div style="position:relative;width:200px;height:200px;flex-shrink:0;"><canvas id="chart-composicion-cliente"></canvas></div>
-        <table style="flex:1;min-width:240px;">
-          <tr><th>Instrumento</th><th class="right">%</th><th class="right">Valor</th></tr>
+        <table style="flex:1;min-width:200px;">
+          <tr><th>Instrumento</th><th class="right">%</th></tr>
           ${composicion.map((c,i)=>`
             <tr>
               <td class="name"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--series-${(i%8)+1});margin-right:7px;"></span>${c.label}</td>
               <td class="right">${c.pct.toFixed(1)}%</td>
-              <td class="right">${fmtUSD(c.valor)}</td>
             </tr>`).join('')}
         </table>
       </div>
@@ -722,10 +721,10 @@ function showFichaCuotapartista(id){
       options:{
         responsive:true, maintainAspectRatio:false,
         plugins:{
-          legend:{ display:false }, // el detalle con % y valor ya está en la tabla al lado
+          legend:{ display:false }, // el detalle con % ya está en la tabla al lado
           tooltip:{ callbacks:{ label: (ctxTip) => {
             const c = composicion[ctxTip.dataIndex];
-            return ` ${c.label}: ${c.pct.toFixed(1)}% (${fmtUSD(c.valor)})`;
+            return ` ${c.label}: ${c.pct.toFixed(1)}%`;
           }}}
         }
       }
