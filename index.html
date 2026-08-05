@@ -16,12 +16,18 @@
   --gain:#3FA37B; --loss:#C0524A; --gold:#CDBD89;
   --gain-bg:#16302a; --loss-bg:#331a18; --gold-bg:#3A331F;
   --font-display:'Fraunces',serif; --font-body:'Inter',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  /* Paleta categórica (composición de cartera, etc.) — pasos oscuros, validados contra --panel oscuro. */
+  --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --series-4:#c98500;
+  --series-5:#d55181; --series-6:#008300; --series-7:#9085e9; --series-8:#e66767;
 }
 :root[data-theme="light"]{
   --bg:#F2F5F4; --panel:#FFFFFF; --panel2:#E8EFEE; --border:#D3DEDD;
   --text:#12282B; --text2:#4C6367; --text3:#7C9296;
   --gain:#1E8E5A; --loss:#C23B33; --gold:#A9915C;
   --gain-bg:#E1F4EA; --loss-bg:#FBE5E3; --gold-bg:#F2EBDA;
+  /* Mismos 8 slots, pasos claros, validados contra --panel blanco. */
+  --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100;
+  --series-5:#e87ba4; --series-6:#008300; --series-7:#4a3aa7; --series-8:#e34948;
 }
 *{box-sizing:border-box;}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);}
@@ -291,6 +297,25 @@ function valorMercadoPosicion(p){
 function patrimonioCartera(){ return posicionesAgregadas().reduce((s,p)=>s+valorMercadoPosicion(p),0); }
 function resultadoRealizadoAcumulado(){ return RESULTADOS.reduce((s,r)=>s+r.resultado,0); }
 function patrimonioTotalFondo(){ return patrimonioCartera() + (LIQUIDEZ.saldo||0); }
+
+// Composición % del patrimonio del fondo (cartera + liquidez), para el gráfico de torta.
+// Es la misma para todos los cuotapartistas — cada uno está expuesto proporcionalmente a esta mezcla.
+// Si hay más de 8 rubros, los más chicos se agrupan en "Otros" para que el gráfico siga siendo legible.
+function composicionCarteraFondo(){
+  const total = patrimonioTotalFondo();
+  if(total<=0) return [];
+  const items = posicionesAgregadas().map(p=>({ label:p.ticker, valor:valorMercadoPosicion(p) })).filter(i=>i.valor>0);
+  if((LIQUIDEZ.saldo||0)>0) items.push({ label:'Liquidez', valor:LIQUIDEZ.saldo });
+  items.sort((a,b)=>b.valor-a.valor);
+  const MAX_SLICES = 8;
+  let visibles = items;
+  if(items.length>MAX_SLICES){
+    const principales = items.slice(0,MAX_SLICES-1);
+    const restoValor = items.slice(MAX_SLICES-1).reduce((s,i)=>s+i.valor,0);
+    visibles = [...principales, { label:'Otros', valor:restoValor }];
+  }
+  return visibles.map(i=>({ ...i, pct: i.valor/total*100 }));
+}
 function cuotapartesTotalesFondo(){
   return MOVIMIENTOS.reduce((s,m)=> s + (m.tipo==='Suscripción'?m.cantidadCuotapartes:-m.cantidadCuotapartes), 0);
 }
@@ -620,6 +645,7 @@ function showFichaCuotapartista(id){
   const valorCuota = valorCuotapartaActual();
   const valorActual = valorCuota!=null ? tenencia*valorCuota : null;
   const rendimiento = rendimientoCuotapartista(id);
+  const composicion = composicionCarteraFondo();
   main.innerHTML = `
     <div class="clientdetail-header">
       <h1>${displayNombre(cp)}</h1>
@@ -634,6 +660,24 @@ function showFichaCuotapartista(id){
       <div class="kpi"><div class="kpi-label">Valor actual</div><div class="kpi-value">${valorActual!=null?fmtUSD(valorActual):'<span class="na">N/D</span>'}</div></div>
       <div class="kpi"><div class="kpi-label">Rendimiento</div><div class="kpi-value ${rendimiento==null?'':(rendimiento>=0?'gain':'loss')}">${fmtPct(rendimiento)}</div></div>
       <div class="kpi"><div class="kpi-label">Estado</div><div class="kpi-value" style="font-size:15px;">${cp.estado}</div></div>
+    </div>
+    <div class="panel">
+      <h3>Composición de la cartera del fondo</h3>
+      ${composicion.length===0?'<div class="empty">Todavía no hay posiciones cargadas.</div>':`
+      <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;">
+        <div style="position:relative;width:200px;height:200px;flex-shrink:0;"><canvas id="chart-composicion-cliente"></canvas></div>
+        <table style="flex:1;min-width:240px;">
+          <tr><th>Instrumento</th><th class="right">%</th><th class="right">Valor</th></tr>
+          ${composicion.map((c,i)=>`
+            <tr>
+              <td class="name"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--series-${(i%8)+1});margin-right:7px;"></span>${c.label}</td>
+              <td class="right">${c.pct.toFixed(1)}%</td>
+              <td class="right">${fmtUSD(c.valor)}</td>
+            </tr>`).join('')}
+        </table>
+      </div>
+      <div class="hint">Es la mezcla de activos de todo el fondo — tu inversión está expuesta proporcionalmente a esta composición.</div>
+      `}
     </div>
     <div id="ficha-cp-extra"></div>
     <div class="panel">
@@ -667,6 +711,27 @@ function showFichaCuotapartista(id){
       </table>`}
     </div>
   `;
+  if(composicion.length>0){
+    const ctx = document.getElementById('chart-composicion-cliente');
+    const rootStyle = getComputedStyle(document.documentElement);
+    const colors = composicion.map((c,i)=> rootStyle.getPropertyValue(`--series-${(i%8)+1}`).trim());
+    const panelColor = rootStyle.getPropertyValue('--panel').trim();
+    const chart = new Chart(ctx, {
+      type:'pie',
+      data:{ labels: composicion.map(c=>c.label), datasets:[{ data: composicion.map(c=>c.valor), backgroundColor: colors, borderColor: panelColor, borderWidth: 2 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ display:false }, // el detalle con % y valor ya está en la tabla al lado
+          tooltip:{ callbacks:{ label: (ctxTip) => {
+            const c = composicion[ctxTip.dataIndex];
+            return ` ${c.label}: ${c.pct.toFixed(1)}% (${fmtUSD(c.valor)})`;
+          }}}
+        }
+      }
+    });
+    chartRefs.push(chart);
+  }
 }
 
 function showFormEditarCuotapartista(id){
