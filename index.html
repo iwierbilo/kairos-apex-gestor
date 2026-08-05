@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="assets/geo-data.js"></script>
 <style>
 :root{
   --bg:#0A1B1E; --panel:#123338; --panel2:#17434A; --border:#235057;
@@ -224,7 +225,7 @@ async function cargarCuotapartistas(){
   const { data } = await sb.from('cuotapartistas').select('*').eq('fondo_id', FONDO_ID);
   CUOTAPARTISTAS = {};
   for(const r of (data||[])){
-    CUOTAPARTISTAS[r.id] = { id:r.id, tipoPersona:r.tipo_persona, nombreRazonSocial:r.nombre_razon_social, documento:r.documento, pais:r.pais, email:r.email, telefono:r.telefono, domicilio:r.domicilio, fechaAlta:r.fecha_alta, estado:r.estado, notas:r.notas };
+    CUOTAPARTISTAS[r.id] = { id:r.id, tipoPersona:r.tipo_persona, nombreRazonSocial:r.nombre_razon_social, documento:r.documento, pais:r.pais, provincia:r.provincia, localidad:r.localidad, email:r.email, telefono:r.telefono, domicilio:r.domicilio, fechaAlta:r.fecha_alta, estado:r.estado, notas:r.notas };
   }
 }
 async function cargarMovimientos(){
@@ -391,8 +392,35 @@ function showCuotapartistas(){
   `;
 }
 
+// Países con selector en cascada de Provincia/Estado y Localidad.
+// AR usa la API pública de georef.gob.ar en vivo; el resto usa datos estáticos (GEO_ESTADOS_LOCALIDADES).
+const GEO_CASCADA_PAISES = ['AR','UY','CL','VE','MX','BR'];
+
+function normalizarTexto(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim(); }
+
+function codigoPorNombrePais(nombre){
+  if(!nombre) return '';
+  const target = normalizarTexto(nombre);
+  const found = Object.entries(GEO_PAISES_ES||{}).find(([,n])=>normalizarTexto(n)===target);
+  return found ? found[0] : '';
+}
+
+function paisesOptions(codigoSeleccionado){
+  const entradas = Object.entries(GEO_PAISES_ES||{}).sort((a,b)=>a[1].localeCompare(b[1]));
+  return '<option value="">Seleccionar…</option>' + entradas.map(([code,nombre])=>
+    `<option value="${code}" ${code===codigoSeleccionado?'selected':''}>${nombre}</option>`).join('');
+}
+
+// Lee el valor "visible" de un campo que puede ser <select> (guardamos el nombre, no el código) o <input> de texto libre.
+function getCampoTexto(id){
+  const el = document.getElementById(id);
+  if(!el) return '';
+  if(el.tagName==='SELECT') return el.selectedOptions[0] ? el.selectedOptions[0].textContent.trim() : '';
+  return el.value.trim();
+}
+
 function renderFormFichaCuotapartista(cp){
-  cp = cp || { tipoPersona:'Física', nombreRazonSocial:'', documento:'', pais:'', email:'', telefono:'', domicilio:'', fechaAlta:new Date().toISOString().slice(0,10), estado:'Activo', notas:'' };
+  cp = cp || { tipoPersona:'Física', nombreRazonSocial:'', documento:'', pais:'', provincia:'', localidad:'', email:'', telefono:'', domicilio:'', fechaAlta:new Date().toISOString().slice(0,10), estado:'Activo', notas:'' };
   return `
     <div class="formbox">
       <h4 style="margin-top:0;">Datos del cuotapartista</h4>
@@ -402,13 +430,17 @@ function renderFormFichaCuotapartista(cp){
       </div>
       <div class="formrow">
         <div><label>Documento (pasaporte / tax ID)</label><input type="text" id="cp-documento" value="${(cp.documento||'').replace(/"/g,'&quot;')}"></div>
-        <div><label>País</label><input type="text" id="cp-pais" value="${(cp.pais||'').replace(/"/g,'&quot;')}"></div>
+        <div><label>País</label><select id="cp-pais" onchange="onCambioPaisCuotapartista()">${paisesOptions(codigoPorNombrePais(cp.pais))}</select></div>
       </div>
+      <div class="formrow">
+        <div id="cp-provincia-field"><label>Provincia / Estado</label><select id="cp-provincia" disabled><option value="">Elegí el país primero</option></select></div>
+        <div id="cp-localidad-field"><label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select></div>
+      </div>
+      <label>Domicilio (calle, altura, depto)</label><input type="text" id="cp-domicilio" value="${(cp.domicilio||'').replace(/"/g,'&quot;')}">
       <div class="formrow">
         <div><label>Email</label><input type="text" id="cp-email" value="${(cp.email||'').replace(/"/g,'&quot;')}"></div>
         <div><label>Teléfono</label><input type="text" id="cp-telefono" value="${(cp.telefono||'').replace(/"/g,'&quot;')}"></div>
       </div>
-      <label>Domicilio</label><input type="text" id="cp-domicilio" value="${(cp.domicilio||'').replace(/"/g,'&quot;')}">
       <div class="formrow">
         <div><label>Fecha de alta</label><input type="date" id="cp-fechaAlta" value="${cp.fechaAlta||''}"></div>
         <div><label>Estado</label><select id="cp-estado"><option ${cp.estado==='Activo'?'selected':''}>Activo</option><option ${cp.estado==='Inactivo'?'selected':''}>Inactivo</option></select></div>
@@ -421,6 +453,86 @@ function renderFormFichaCuotapartista(cp){
   `;
 }
 
+// Se llama después de insertar el formulario en el DOM: precarga País y dispara la cascada
+// hacia Provincia/Localidad, preseleccionando lo que ya estaba guardado (por nombre, no por código).
+function initGeoCuotapartista(cp){
+  onCambioPaisCuotapartista((cp&&cp.provincia)||'', (cp&&cp.localidad)||'');
+}
+
+async function onCambioPaisCuotapartista(provinciaPreset, localidadPreset){
+  const pais = document.getElementById('cp-pais').value;
+  const provField = document.getElementById('cp-provincia-field');
+  const locField = document.getElementById('cp-localidad-field');
+  if(!pais){
+    provField.innerHTML = '<label>Provincia / Estado</label><select id="cp-provincia" disabled><option value="">Elegí el país primero</option></select>';
+    locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>';
+    return;
+  }
+  if(!GEO_CASCADA_PAISES.includes(pais)){
+    // Sin datos para este país: campos de texto libre.
+    provField.innerHTML = `<label>Provincia / Estado</label><input type="text" id="cp-provincia" value="${(provinciaPreset||'').replace(/"/g,'&quot;')}">`;
+    locField.innerHTML = `<label>Localidad</label><input type="text" id="cp-localidad" value="${(localidadPreset||'').replace(/"/g,'&quot;')}">`;
+    return;
+  }
+  if(pais==='AR'){
+    provField.innerHTML = '<label>Provincia</label><select id="cp-provincia" onchange="onCambioProvinciaCuotapartista()"><option value="">Cargando…</option></select>';
+    locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>';
+    try{
+      const res = await fetch('https://apis.datos.gob.ar/georef/api/provincias?campos=id,nombre&max=30&orden=nombre');
+      const data = await res.json();
+      const sel = document.getElementById('cp-provincia');
+      if(!sel) return; // el usuario cambió de país mientras cargaba
+      sel.innerHTML = '<option value="">Seleccionar…</option>' + data.provincias.map(p=>
+        `<option value="${p.id}" ${p.nombre===provinciaPreset?'selected':''}>${p.nombre}</option>`).join('');
+      if(provinciaPreset && sel.value) await onCambioProvinciaCuotapartista(localidadPreset);
+    }catch(e){
+      provField.innerHTML = `<label>Provincia</label><input type="text" id="cp-provincia" value="${(provinciaPreset||'').replace(/"/g,'&quot;')}">`;
+      locField.innerHTML = `<label>Localidad</label><input type="text" id="cp-localidad" value="${(localidadPreset||'').replace(/"/g,'&quot;')}"><div class="hint">No se pudo cargar el listado de provincias (sin conexión) — completá a mano.</div>`;
+    }
+    return;
+  }
+  // UY / CL / VE / MX / BR: datos estáticos embebidos.
+  const datosPais = (GEO_ESTADOS_LOCALIDADES||{})[pais];
+  const estados = datosPais ? Object.entries(datosPais.s).sort((a,b)=>a[1].n.localeCompare(b[1].n)) : [];
+  provField.innerHTML = '<label>Provincia / Estado</label><select id="cp-provincia" onchange="onCambioProvinciaCuotapartista()"><option value="">Seleccionar…</option>' +
+    estados.map(([code,st])=>`<option value="${code}" ${st.n===provinciaPreset?'selected':''}>${st.n}</option>`).join('') + '</select>';
+  locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>';
+  if(provinciaPreset) onCambioProvinciaCuotapartista(localidadPreset);
+}
+
+function onCambioProvinciaCuotapartista(localidadPreset){
+  const pais = document.getElementById('cp-pais').value;
+  const provSel = document.getElementById('cp-provincia');
+  const locField = document.getElementById('cp-localidad-field');
+  if(!provSel || provSel.tagName!=='SELECT') return; // modo texto libre, no hay cascada
+
+  if(pais==='AR'){
+    const provId = provSel.value;
+    if(!provId){ locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>'; return; }
+    locField.innerHTML = '<label>Localidad</label><select id="cp-localidad"><option value="">Cargando…</option></select>';
+    return fetch(`https://apis.datos.gob.ar/georef/api/localidades?provincia=${provId}&campos=id,nombre&max=1000&orden=nombre`)
+      .then(res=>res.json())
+      .then(data=>{
+        const sel = document.getElementById('cp-localidad');
+        if(!sel) return;
+        sel.innerHTML = '<option value="">Seleccionar…</option>' + data.localidades.map(l=>
+          `<option ${l.nombre===localidadPreset?'selected':''}>${l.nombre}</option>`).join('');
+      })
+      .catch(()=>{
+        locField.innerHTML = `<label>Localidad</label><input type="text" id="cp-localidad" value="${(localidadPreset||'').replace(/"/g,'&quot;')}"><div class="hint">No se pudo cargar el listado de localidades — completá a mano.</div>`;
+      });
+  }
+
+  // UY / CL / VE / MX / BR
+  const stCode = provSel.value;
+  const datosPais = (GEO_ESTADOS_LOCALIDADES||{})[pais];
+  const st = datosPais && datosPais.s[stCode];
+  const cities = st ? st.c : [];
+  if(!stCode){ locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>'; return; }
+  locField.innerHTML = '<label>Localidad</label><select id="cp-localidad"><option value="">Seleccionar…</option>' +
+    cities.map(c=>`<option ${c===localidadPreset?'selected':''}>${c}</option>`).join('') + '</select>';
+}
+
 async function guardarCuotapartista(id){
   const msg = document.getElementById('cp-msg');
   const nombre = document.getElementById('cp-nombre').value.trim();
@@ -430,7 +542,9 @@ async function guardarCuotapartista(id){
     tipo_persona: document.getElementById('cp-tipoPersona').value,
     nombre_razon_social: nombre,
     documento: document.getElementById('cp-documento').value.trim() || null,
-    pais: document.getElementById('cp-pais').value.trim() || null,
+    pais: getCampoTexto('cp-pais') || null,
+    provincia: getCampoTexto('cp-provincia') || null,
+    localidad: getCampoTexto('cp-localidad') || null,
     email: document.getElementById('cp-email').value.trim() || null,
     telefono: document.getElementById('cp-telefono').value.trim() || null,
     domicilio: document.getElementById('cp-domicilio').value.trim() || null,
@@ -455,6 +569,7 @@ function showFichaCuotapartista(id){
   const main = document.getElementById('main');
   if(!id){
     main.innerHTML = `<h1>Nuevo cuotapartista</h1><p class="subtitle">Datos básicos del inversor.</p>${renderFormFichaCuotapartista(null)}`;
+    initGeoCuotapartista(null);
     return;
   }
   const cp = CUOTAPARTISTAS[id];
@@ -483,6 +598,8 @@ function showFichaCuotapartista(id){
       <div class="fichagrid">
         <div class="f"><div class="f-label">Documento</div>${cp.documento||'-'}</div>
         <div class="f"><div class="f-label">País</div>${cp.pais||'-'}</div>
+        <div class="f"><div class="f-label">Provincia / Estado</div>${cp.provincia||'-'}</div>
+        <div class="f"><div class="f-label">Localidad</div>${cp.localidad||'-'}</div>
         <div class="f"><div class="f-label">Teléfono</div>${cp.telefono||'-'}</div>
         <div class="f"><div class="f-label">Domicilio</div>${cp.domicilio||'-'}</div>
         <div class="f"><div class="f-label">Alta</div>${cp.fechaAlta||'-'}</div>
@@ -512,6 +629,7 @@ function showFormEditarCuotapartista(id){
   const el = document.getElementById('ficha-cp-extra');
   if(!el) return;
   el.innerHTML = renderFormFichaCuotapartista(CUOTAPARTISTAS[id]);
+  initGeoCuotapartista(CUOTAPARTISTAS[id]);
 }
 
 // ---------- SUSCRIPCIÓN / RESCATE ----------
