@@ -199,6 +199,7 @@ function initTheme(){
 const uid = () => 'k_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
 const fmtUSD = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : (n<0?'-':'') + 'US$' + Math.abs(n).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtNum = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : Number(n).toLocaleString('es-AR',{maximumFractionDigits:4});
+const fmtPct = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : (n>=0?'+':'') + n.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}) + '%';
 
 let currentView = 'inicio';
 let currentCuotapartistaId = null;
@@ -301,6 +302,19 @@ function valorCuotapartaActual(){
 function tenenciaCuotapartista(id){
   return MOVIMIENTOS.filter(m=>m.cuotapartistaId===id).reduce((s,m)=> s + (m.tipo==='Suscripción'?m.cantidadCuotapartes:-m.cantidadCuotapartes), 0);
 }
+// Rendimiento % sobre el total aportado: (lo que tiene hoy + lo que ya rescató - lo que suscribió) / lo que suscribió.
+// Al usar cuotapartes, cada suscripción ya "entra" al valor de cuotaparte de su fecha — por eso no hace falta
+// ponderar por tiempo para comparar aportes en distintos momentos, a diferencia de comparar montos en dólares crudos.
+function rendimientoCuotapartista(id){
+  const movs = MOVIMIENTOS.filter(m=>m.cuotapartistaId===id);
+  const totalSuscripto = movs.filter(m=>m.tipo==='Suscripción').reduce((s,m)=>s+m.monto,0);
+  const totalRescatado = movs.filter(m=>m.tipo==='Rescate').reduce((s,m)=>s+m.monto,0);
+  if(totalSuscripto<=0) return null;
+  const valorCuota = valorCuotapartaActual();
+  if(valorCuota==null) return null;
+  const valorActual = tenenciaCuotapartista(id)*valorCuota;
+  return ((valorActual + totalRescatado - totalSuscripto) / totalSuscripto) * 100;
+}
 function displayNombre(cp){ return cp ? cp.nombreRazonSocial : '(sin nombre)'; }
 
 function renderTodo(){
@@ -373,17 +387,19 @@ function showCuotapartistas(){
     ${ids.length===0?'<div class="empty">Todavía no cargaste ningún cuotapartista.</div>':`
     <div class="panel">
       <table>
-        <tr><th>Nombre</th><th>Tipo</th><th class="right">Cuotapartes</th><th class="right">Valor actual</th><th>Estado</th><th></th></tr>
+        <tr><th>Nombre</th><th>Tipo</th><th class="right">Cuotapartes</th><th class="right">Valor actual</th><th class="right">Rendimiento</th><th>Estado</th><th></th></tr>
         ${ids.map(id=>{
           const cp = CUOTAPARTISTAS[id];
           const tenencia = tenenciaCuotapartista(id);
           const valor = valorCuota!=null ? tenencia*valorCuota : null;
+          const rendimiento = rendimientoCuotapartista(id);
           return `
           <tr class="clickable" onclick="showFichaCuotapartista('${id}')">
             <td class="name">${displayNombre(cp)}</td>
             <td><span class="badge-mini">${cp.tipoPersona==='Jurídica'?'Jur.':'Fís.'}</span></td>
             <td class="right">${fmtNum(tenencia)}</td>
             <td class="right">${valor!=null?fmtUSD(valor):'<span class="na">N/D</span>'}</td>
+            <td class="right ${rendimiento==null?'':(rendimiento>=0?'gain':'loss')}">${fmtPct(rendimiento)}</td>
             <td><span class="tag">${cp.estado}</span></td>
             <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--loss);" onclick="event.stopPropagation(); eliminarCuotapartista('${id}')">eliminar</span></td>
           </tr>`;
@@ -603,6 +619,7 @@ function showFichaCuotapartista(id){
   const tenencia = tenenciaCuotapartista(id);
   const valorCuota = valorCuotapartaActual();
   const valorActual = valorCuota!=null ? tenencia*valorCuota : null;
+  const rendimiento = rendimientoCuotapartista(id);
   main.innerHTML = `
     <div class="clientdetail-header">
       <h1>${displayNombre(cp)}</h1>
@@ -615,6 +632,7 @@ function showFichaCuotapartista(id){
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-label">Cuotapartes</div><div class="kpi-value">${fmtNum(tenencia)}</div></div>
       <div class="kpi"><div class="kpi-label">Valor actual</div><div class="kpi-value">${valorActual!=null?fmtUSD(valorActual):'<span class="na">N/D</span>'}</div></div>
+      <div class="kpi"><div class="kpi-label">Rendimiento</div><div class="kpi-value ${rendimiento==null?'':(rendimiento>=0?'gain':'loss')}">${fmtPct(rendimiento)}</div></div>
       <div class="kpi"><div class="kpi-label">Estado</div><div class="kpi-value" style="font-size:15px;">${cp.estado}</div></div>
     </div>
     <div id="ficha-cp-extra"></div>
