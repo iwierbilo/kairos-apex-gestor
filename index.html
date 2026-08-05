@@ -877,6 +877,7 @@ function showCarteraFondo(){
     </div>
     <div style="display:flex;gap:10px;margin-bottom:20px;">
       <button class="btn small" onclick="showFormPosicion()">+ Agregar posición manual</button>
+      <button class="btn secondary small" onclick="showFormAjustarLiquidez()">Ajustar liquidez</button>
       <button class="btn secondary small" onclick="actualizarCotizacionesFondo()">Actualizar cotizaciones (acciones)</button>
       <button class="btn secondary small" onclick="recalcularValuacion()">Recalcular valor de cuotaparte</button>
     </div>
@@ -965,6 +966,37 @@ function showFormPosicion(){
 function toggleCamposOpcionPosicion(){
   const esOpcion = document.getElementById('pos-tipoActivo').value==='Opción';
   document.getElementById('pos-campos-opcion').style.display = esOpcion ? '' : 'none';
+}
+
+// ---------- AJUSTE MANUAL DE LIQUIDEZ ----------
+// Para corregir el saldo cuando no coincide con la realidad — típicamente al cargar una
+// cartera y suscripciones históricas por separado, sin reconstruir cada movimiento de caja.
+function showFormAjustarLiquidez(){
+  const el = document.getElementById('form-posicion-container');
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Ajustar liquidez disponible</h4>
+      <div class="hint" style="margin-top:0;">Saldo actual: ${fmtUSD(LIQUIDEZ.saldo)}. Este ajuste pisa el saldo directamente (no suma ni resta) — usalo para que coincida con el efectivo real del fondo hoy.</div>
+      <label>Nuevo saldo de liquidez (US$)</label><input type="text" id="ajliq-saldo" value="${LIQUIDEZ.saldo||0}">
+      <button class="btn" onclick="guardarAjusteLiquidez()">Guardar</button>
+      <button class="btn secondary" onclick="document.getElementById('form-posicion-container').innerHTML=''">Cancelar</button>
+      <div id="ajliq-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+async function guardarAjusteLiquidez(){
+  const msg = document.getElementById('ajliq-msg');
+  const saldo = parseFloat(String(document.getElementById('ajliq-saldo').value).replace(',','.'));
+  if(isNaN(saldo)){ msg.className='msg err'; msg.textContent='Ingresá un monto válido.'; return; }
+  try{
+    await sb.from('liquidez_fondo').update({ saldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    await cargarLiquidez();
+    document.getElementById('form-posicion-container').innerHTML='';
+    showCarteraFondo();
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar el ajuste.';
+  }
 }
 
 async function actualizarPrecioCache(datos, precio){
