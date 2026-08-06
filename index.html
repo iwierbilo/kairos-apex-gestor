@@ -232,7 +232,7 @@ async function cargarCuotapartistas(){
   const { data } = await sb.from('cuotapartistas').select('*').eq('fondo_id', FONDO_ID);
   CUOTAPARTISTAS = {};
   for(const r of (data||[])){
-    CUOTAPARTISTAS[r.id] = { id:r.id, tipoPersona:r.tipo_persona, nombreRazonSocial:r.nombre_razon_social, documento:r.documento, pais:r.pais, provincia:r.provincia, localidad:r.localidad, email:r.email, telefono:r.telefono, domicilio:r.domicilio, fechaAlta:r.fecha_alta, estado:r.estado, notas:r.notas };
+    CUOTAPARTISTAS[r.id] = { id:r.id, tipoPersona:r.tipo_persona, nombreRazonSocial:r.nombre_razon_social, documento:r.documento, pais:r.pais, provincia:r.provincia, localidad:r.localidad, email:r.email, telefono:r.telefono, domicilio:r.domicilio, fechaAlta:r.fecha_alta, estado:r.estado, notas:r.notas, authUserId:r.auth_user_id };
   }
 }
 async function cargarMovimientos(){
@@ -651,6 +651,7 @@ function showFichaCuotapartista(id){
       <h1>${displayNombre(cp)}</h1>
       <div class="actions">
         <button class="btn secondary small" onclick="showFormEditarCuotapartista('${id}')">Editar ficha</button>
+        <button class="btn secondary small" onclick="showFormVincularAcceso('${id}')">${cp.authUserId?'Acceso de cliente: vinculado':'Vincular acceso de cliente'}</button>
         <button class="btn small" onclick="showFormMovimiento('${id}')">Nueva suscripción / rescate</button>
       </div>
     </div>
@@ -738,6 +739,41 @@ function showFormEditarCuotapartista(id){
   if(!el) return;
   el.innerHTML = renderFormFichaCuotapartista(CUOTAPARTISTAS[id]);
   initGeoCuotapartista(CUOTAPARTISTAS[id]);
+}
+
+// ---------- ACCESO DEL CLIENTE A SU PROPIO PANEL (cliente.html) ----------
+function showFormVincularAcceso(id){
+  const el = document.getElementById('ficha-cp-extra');
+  if(!el) return;
+  const cp = CUOTAPARTISTAS[id];
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Acceso de cliente a su panel propio</h4>
+      ${cp.authUserId
+        ? `<div class="hint" style="margin-top:0;">Ya tiene acceso vinculado. Si necesitás cambiarlo a otro usuario, ingresá el nuevo email.</div>`
+        : `<div class="hint" style="margin-top:0;">Primero creá el usuario en Supabase → Authentication → Users (con el email y contraseña que le vas a pasar al cliente). Después pegá aquí ese mismo email para vincularlo a esta ficha.</div>`}
+      <label>Email del usuario (ya creado en Authentication → Users)</label>
+      <input type="text" id="vinc-email" value="${(cp.email||'').replace(/"/g,'&quot;')}" placeholder="cliente@email.com">
+      <button class="btn" onclick="guardarVinculoAcceso('${id}')">Vincular</button>
+      <button class="btn secondary" onclick="document.getElementById('ficha-cp-extra').innerHTML=''">Cancelar</button>
+      <div id="vinc-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+async function guardarVinculoAcceso(id){
+  const msg = document.getElementById('vinc-msg');
+  const email = document.getElementById('vinc-email').value.trim();
+  if(!email){ msg.className='msg err'; msg.textContent='Ingresá el email.'; return; }
+  try{
+    const { error } = await sb.rpc('vincular_acceso_cliente', { p_cuotapartista_id: id, p_email: email });
+    if(error) throw error;
+    await cargarCuotapartistas();
+    msg.className='msg ok'; msg.textContent='Acceso vinculado. Ya puede entrar en cliente.html con ese email.';
+    setTimeout(()=>showFichaCuotapartista(id), 500);
+  }catch(e){
+    msg.className='msg err'; msg.textContent = e.message || 'Error al vincular el acceso.';
+  }
 }
 
 // ---------- SUSCRIPCIÓN / RESCATE ----------

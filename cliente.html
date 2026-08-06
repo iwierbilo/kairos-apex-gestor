@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kairos Asset Management — Panel del cuotapartista</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+:root{
+  --bg:#0A1B1E; --panel:#123338; --panel2:#17434A; --border:#235057;
+  --text:#E9F1F0; --text2:#9AB5B9; --text3:#6B8A8E;
+  --gain:#3FA37B; --loss:#C0524A; --gold:#CDBD89;
+  --gain-bg:#16302a; --loss-bg:#331a18; --gold-bg:#3A331F;
+  --font-display:'Fraunces',serif; --font-body:'Inter',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --series-4:#c98500;
+  --series-5:#d55181; --series-6:#008300; --series-7:#9085e9; --series-8:#e66767;
+}
+:root[data-theme="light"]{
+  --bg:#F2F5F4; --panel:#FFFFFF; --panel2:#E8EFEE; --border:#D3DEDD;
+  --text:#12282B; --text2:#4C6367; --text3:#7C9296;
+  --gain:#1E8E5A; --loss:#C23B33; --gold:#A9915C;
+  --gain-bg:#E1F4EA; --loss-bg:#FBE5E3; --gold-bg:#F2EBDA;
+  --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100;
+  --series-5:#e87ba4; --series-6:#008300; --series-7:#4a3aa7; --series-8:#e34948;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:16px 32px;border-bottom:1px solid var(--border);background:var(--panel);}
+.brand{font-family:var(--font-display);font-size:16px;}
+.brand-sub{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;}
+.topbar-actions{display:flex;gap:10px;align-items:center;}
+.curtoggle{display:flex;background:var(--panel2);border-radius:6px;padding:3px;}
+.curtoggle button{background:none;border:none;color:var(--text2);font-family:var(--font-mono);font-size:11.5px;padding:6px 10px;border-radius:5px;cursor:pointer;}
+.curtoggle button.active{background:var(--gold);color:#1a1408;font-weight:600;}
+.logoutbtn{background:none;border:1px solid var(--border);color:var(--text2);font-size:12px;padding:7px 12px;border-radius:6px;cursor:pointer;}
+.logoutbtn:hover{color:var(--text);border-color:var(--gold);}
+.main{max-width:900px;margin:0 auto;padding:32px 24px;}
+h1{font-family:var(--font-display);font-weight:500;font-size:26px;margin:0 0 4px;}
+.subtitle{color:var(--text2);font-size:13px;margin:0 0 28px;}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px;}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;}
+.kpi-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;}
+.kpi-value{font-family:var(--font-mono);font-size:22px;font-weight:500;}
+.kpi-value.gain{color:var(--gain);}
+.kpi-value.loss{color:var(--loss);}
+.gain{color:var(--gain);}
+.loss{color:var(--loss);}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:24px;}
+.panel h3{font-size:13px;font-weight:500;color:var(--text2);margin:0 0 14px;text-transform:uppercase;letter-spacing:0.5px;}
+table{width:100%;border-collapse:collapse;font-size:12.5px;}
+th{text-align:left;color:var(--text3);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;padding:6px 8px;border-bottom:1px solid var(--border);}
+td{padding:7px 8px;border-bottom:1px solid var(--border);font-family:var(--font-mono);}
+td.name{font-family:var(--font-body);}
+tr:last-child td{border-bottom:none;}
+.tag{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;background:var(--panel2);color:var(--text2);font-family:var(--font-body);}
+.tag.tipo-Suscripción{background:var(--gain-bg);color:var(--gain);}
+.tag.tipo-Rescate{background:var(--loss-bg);color:var(--loss);}
+.right{text-align:right;}
+.na{color:var(--text3);}
+.hint{font-size:11px;color:var(--text3);margin-top:10px;line-height:1.5;}
+.empty{color:var(--text3);font-size:13px;padding:30px 0;text-align:center;}
+.msg{font-size:12px;margin-top:12px;}
+.msg.err{color:var(--loss);}
+.msg.ok{color:var(--gain);}
+.btn{margin-top:20px;background:var(--gold);color:#1a1408;border:none;padding:10px 22px;border-radius:6px;font-family:var(--font-body);font-weight:600;font-size:13px;cursor:pointer;}
+#login-gate{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
+#login-gate .loginbox{width:100%;max-width:340px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;text-align:center;}
+#login-gate .brand{font-size:20px;margin-bottom:2px;}
+#login-gate .subtitle{margin:0 0 22px;}
+#login-gate label{display:block;text-align:left;font-size:11px;color:var(--text2);margin:12px 0 5px;text-transform:uppercase;letter-spacing:0.4px;}
+#login-gate input{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:6px;font-family:var(--font-body);font-size:13.5px;}
+</style>
+</head>
+<body>
+
+<div id="login-gate">
+  <div class="loginbox">
+    <div class="brand">KAIROS ASSET MANAGEMENT</div>
+    <p class="subtitle">Apex Strategy Fund — acceso de cuotapartista</p>
+    <label>Email</label>
+    <input type="text" id="login-email" placeholder="tu@email.com" autocomplete="username">
+    <label style="margin-top:10px;">Contraseña</label>
+    <input type="password" id="login-password" placeholder="Contraseña" autocomplete="current-password">
+    <button class="btn" style="width:100%;" onclick="hacerLogin()">Ingresar</button>
+    <div id="login-msg" class="msg"></div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <div class="topbar">
+    <div>
+      <div class="brand">KAIROS ASSET MANAGEMENT</div>
+      <div class="brand-sub">Apex Strategy Fund</div>
+    </div>
+    <div class="topbar-actions">
+      <div class="curtoggle">
+        <button id="theme-dark" class="active" onclick="setTheme('dark')">Oscuro</button>
+        <button id="theme-light" onclick="setTheme('light')">Claro</button>
+      </div>
+      <button class="logoutbtn" onclick="hacerLogout()">Cerrar sesión</button>
+    </div>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+
+<script>
+// ---------- SUPABASE ----------
+// Misma URL/key públicas que index.html — el acceso real lo controla la base (RLS + funciones),
+// no esta key (que de todos modos es pública por diseño en cualquier app de Supabase).
+const SUPABASE_URL = 'https://avupggkgqarbxzlpzzfk.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_E7pVPg9JH910s4pT6TXx2A_n7w0EAmg';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const fmtUSD = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : (n<0?'-':'') + 'US$' + Math.abs(n).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtNum = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : Number(n).toLocaleString('es-AR',{maximumFractionDigits:4});
+const fmtPct = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : (n>=0?'+':'') + Number(n).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}) + '%';
+
+function setTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme-kairos-cliente', theme);
+  document.getElementById('theme-dark').classList.toggle('active', theme==='dark');
+  document.getElementById('theme-light').classList.toggle('active', theme==='light');
+}
+function initTheme(){
+  setTheme(localStorage.getItem('theme-kairos-cliente') || 'dark');
+}
+
+let chartRefs = [];
+function destroyCharts(){ chartRefs.forEach(c=>c.destroy()); chartRefs=[]; }
+
+async function hacerLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const msg = document.getElementById('login-msg');
+  if(!email || !password){ msg.className='msg err'; msg.textContent='Ingresá email y contraseña.'; return; }
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ msg.className='msg err'; msg.textContent='Email o contraseña incorrectos.'; return; }
+  msg.textContent='';
+  await mostrarApp();
+}
+async function hacerLogout(){
+  await sb.auth.signOut();
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-gate').style.display='flex';
+  document.getElementById('login-email').value='';
+  document.getElementById('login-password').value='';
+}
+async function mostrarApp(){
+  const { data:{session} } = await sb.auth.getSession();
+  if(!session) return;
+  document.getElementById('login-gate').style.display='none';
+  document.getElementById('app').style.display='block';
+  await mostrarMiPanel();
+}
+async function checkSession(){
+  const { data:{session} } = await sb.auth.getSession();
+  if(session) await mostrarApp();
+}
+sb.auth.onAuthStateChange((event)=>{
+  if(event==='SIGNED_OUT'){
+    document.getElementById('app').style.display='none';
+    document.getElementById('login-gate').style.display='flex';
+  }
+});
+
+// ---------- PANEL DEL CUOTAPARTISTA ----------
+// Todo lo que se ve acá viene de funciones de la base (mi_ficha, mis_movimientos,
+// composicion_cartera_publica) que ya filtran del lado del servidor: nunca devuelven
+// datos de otro cuotapartista, ni montos totales del fondo — solo % y lo propio.
+async function mostrarMiPanel(){
+  destroyCharts();
+  const main = document.getElementById('main');
+  main.innerHTML = `<p class="subtitle">Cargando...</p>`;
+
+  const [{ data: fichaRows, error: errFicha }, { data: movs, error: errMovs }, { data: composicion, error: errComp }] = await Promise.all([
+    sb.rpc('mi_ficha'),
+    sb.rpc('mis_movimientos'),
+    sb.rpc('composicion_cartera_publica')
+  ]);
+
+  if(errFicha || !fichaRows || fichaRows.length===0){
+    main.innerHTML = `<div class="empty">No encontramos una ficha vinculada a este usuario. Consultá con Kairos Asset Management.</div>`;
+    return;
+  }
+  const f = fichaRows[0];
+  const rendimiento = f.rendimiento_pct;
+
+  main.innerHTML = `
+    <h1>${f.nombre}</h1>
+    <p class="subtitle">Tu posición en Apex Strategy Fund.</p>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Cuotapartes</div><div class="kpi-value">${fmtNum(f.cuotapartes)}</div></div>
+      <div class="kpi"><div class="kpi-label">Valor actual</div><div class="kpi-value">${f.valor_actual!=null?fmtUSD(f.valor_actual):'<span class="na">N/D</span>'}</div></div>
+      <div class="kpi"><div class="kpi-label">Rendimiento</div><div class="kpi-value ${rendimiento==null?'':(rendimiento>=0?'gain':'loss')}">${fmtPct(rendimiento)}</div></div>
+      <div class="kpi"><div class="kpi-label">Estado</div><div class="kpi-value" style="font-size:15px;">${f.estado}</div></div>
+    </div>
+    <div class="panel">
+      <h3>Composición de la cartera del fondo</h3>
+      ${(!composicion || composicion.length===0 || errComp) ? '<div class="empty">Todavía no hay posiciones cargadas.</div>' : `
+      <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;">
+        <div style="position:relative;width:200px;height:200px;flex-shrink:0;"><canvas id="chart-composicion"></canvas></div>
+        <table style="flex:1;min-width:200px;">
+          <tr><th>Instrumento</th><th class="right">%</th></tr>
+          ${composicion.map((c,i)=>`
+            <tr>
+              <td class="name"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--series-${(i%8)+1});margin-right:7px;"></span>${c.instrumento}</td>
+              <td class="right">${Number(c.pct).toFixed(1)}%</td>
+            </tr>`).join('')}
+        </table>
+      </div>
+      <div class="hint">Es la mezcla de activos de todo el fondo — tu inversión está expuesta proporcionalmente a esta composición.</div>
+      `}
+    </div>
+    <div class="panel">
+      <h3>Historial de movimientos</h3>
+      ${(!movs || movs.length===0 || errMovs) ? '<div class="empty">Todavía no tenés movimientos registrados.</div>' : `
+      <table>
+        <tr><th>Fecha</th><th>Tipo</th><th class="right">Monto</th><th class="right">Valor cuotaparte</th><th class="right">Cuotapartes</th><th>Comprobante</th></tr>
+        ${movs.map(m=>`
+          <tr>
+            <td>${m.fecha}</td>
+            <td><span class="tag tipo-${m.tipo}">${m.tipo}</span></td>
+            <td class="right">${fmtUSD(m.monto)}</td>
+            <td class="right">${fmtUSD(m.valor_cuotaparte)}</td>
+            <td class="right">${fmtNum(m.cantidad_cuotapartes)}</td>
+            <td>${m.numero_comprobante||'-'}</td>
+          </tr>`).join('')}
+      </table>`}
+    </div>
+  `;
+
+  if(composicion && composicion.length>0 && !errComp){
+    const ctx = document.getElementById('chart-composicion');
+    const rootStyle = getComputedStyle(document.documentElement);
+    const colors = composicion.map((c,i)=> rootStyle.getPropertyValue(`--series-${(i%8)+1}`).trim());
+    const panelColor = rootStyle.getPropertyValue('--panel').trim();
+    const chart = new Chart(ctx, {
+      type:'pie',
+      data:{ labels: composicion.map(c=>c.instrumento), datasets:[{ data: composicion.map(c=>c.pct), backgroundColor: colors, borderColor: panelColor, borderWidth: 2 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ display:false },
+          tooltip:{ callbacks:{ label: (ctxTip) => ` ${ctxTip.label}: ${Number(ctxTip.raw).toFixed(1)}%` } }
+        }
+      }
+    });
+    chartRefs.push(chart);
+  }
+}
+
+initTheme();
+checkSession();
+</script>
+</body>
+</html>
