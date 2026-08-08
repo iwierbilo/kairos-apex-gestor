@@ -45,6 +45,11 @@ update cuotapartistas set persona_id = id where persona_id is null;
 alter table cuotapartistas alter column persona_id set not null;
 
 -- ============ 3. QUITAR DE cuotapartistas LO QUE AHORA VIVE EN personas ============
+-- Primero hay que soltar las policies viejas que todavía dependen de cuotapartistas.auth_user_id
+-- (si no, Postgres no deja borrar la columna).
+drop policy if exists "cliente ve su propia ficha" on cuotapartistas;
+drop policy if exists "cliente ve sus propios movimientos" on movimientos_cuotapartes;
+
 alter table cuotapartistas
   drop column if exists tipo_persona,
   drop column if exists nombre_razon_social,
