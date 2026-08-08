@@ -218,6 +218,7 @@ function setNav(id){
 }
 
 // ---------- ESTADO Y CARGA DE DATOS ----------
+let PERSONAS = {};
 let CUOTAPARTISTAS = {};
 let MOVIMIENTOS = [];
 let POSICIONES = [];
@@ -229,10 +230,19 @@ let RESULTADOS = [];
 let ANALISIS_OPCIONES = [];
 
 async function cargarCuotapartistas(){
+  // "personas" tiene la identidad (nombre, documento, contacto, login...); "cuotapartistas" es
+  // la posición puntual de esa persona en ESTE fondo (fondo_id, estado). Se combinan acá para que
+  // el resto del código admin siga viendo un solo objeto por cliente, como antes.
+  const { data: personasData } = await sb.from('personas').select('*');
+  PERSONAS = {};
+  for(const r of (personasData||[])){
+    PERSONAS[r.id] = { id:r.id, tipoPersona:r.tipo_persona, nombreRazonSocial:r.nombre_razon_social, documento:r.documento, pais:r.pais, provincia:r.provincia, localidad:r.localidad, email:r.email, telefono:r.telefono, domicilio:r.domicilio, fechaAlta:r.fecha_alta, notas:r.notas, authUserId:r.auth_user_id };
+  }
   const { data } = await sb.from('cuotapartistas').select('*').eq('fondo_id', FONDO_ID);
   CUOTAPARTISTAS = {};
   for(const r of (data||[])){
-    CUOTAPARTISTAS[r.id] = { id:r.id, tipoPersona:r.tipo_persona, nombreRazonSocial:r.nombre_razon_social, documento:r.documento, pais:r.pais, provincia:r.provincia, localidad:r.localidad, email:r.email, telefono:r.telefono, domicilio:r.domicilio, fechaAlta:r.fecha_alta, estado:r.estado, notas:r.notas, authUserId:r.auth_user_id };
+    const persona = PERSONAS[r.persona_id] || {};
+    CUOTAPARTISTAS[r.id] = { ...persona, id:r.id, personaId:r.persona_id, fondoId:r.fondo_id, estado:r.estado };
   }
 }
 async function cargarMovimientos(){
@@ -579,8 +589,9 @@ async function guardarCuotapartista(id){
   const msg = document.getElementById('cp-msg');
   const nombre = document.getElementById('cp-nombre').value.trim();
   if(!nombre){ msg.className='msg err'; msg.textContent='Ingresá el nombre o razón social.'; return; }
-  const row = {
-    fondo_id: FONDO_ID,
+  // "id" es el id de la posición (cuotapartista) que se está editando, si existe. La persona
+  // detrás es CUOTAPARTISTAS[id].personaId — o una nueva, si es un cuotapartista nuevo.
+  const personaRow = {
     tipo_persona: document.getElementById('cp-tipoPersona').value,
     nombre_razon_social: nombre,
     documento: document.getElementById('cp-documento').value.trim() || null,
@@ -591,12 +602,14 @@ async function guardarCuotapartista(id){
     telefono: document.getElementById('cp-telefono').value.trim() || null,
     domicilio: document.getElementById('cp-domicilio').value.trim() || null,
     fecha_alta: document.getElementById('cp-fechaAlta').value || null,
-    estado: document.getElementById('cp-estado').value,
     notas: document.getElementById('cp-notas').value.trim() || null
   };
+  const cpExistente = id ? CUOTAPARTISTAS[id] : null;
+  const personaId = cpExistente ? cpExistente.personaId : uid();
   const cuotapartistaId = id || uid();
   try{
-    await sb.from('cuotapartistas').upsert({ id: cuotapartistaId, ...row });
+    await sb.from('personas').upsert({ id: personaId, ...personaRow });
+    await sb.from('cuotapartistas').upsert({ id: cuotapartistaId, fondo_id: FONDO_ID, persona_id: personaId, estado: document.getElementById('cp-estado').value });
     await cargarCuotapartistas();
     msg.className='msg ok'; msg.textContent='Cuotapartista guardado.';
     setTimeout(()=>showFichaCuotapartista(cuotapartistaId), 300);
@@ -616,6 +629,12 @@ async function eliminarCuotapartista(id){
     // acá revertimos su efecto neto sobre la liquidez del fondo antes de borrar.
     const netoContribucion = movs.reduce((acc,m)=> acc + (m.tipo==='Suscripción'?m.monto:-m.monto), 0);
     await sb.from('cuotapartistas').delete().eq('id', id);
+    // Si esta persona no tiene ninguna otra posición en ningún fondo, borramos también su
+    // ficha de personas (si tiene otras, la dejamos — sigue siendo cliente en otro fondo).
+    const { data: otrasPosiciones } = await sb.from('cuotapartistas').select('id').eq('persona_id', cp.personaId).limit(1);
+    if(!otrasPosiciones || otrasPosiciones.length===0){
+      await sb.from('personas').delete().eq('id', cp.personaId);
+    }
     if(netoContribucion !== 0){
       const nuevoSaldo = (LIQUIDEZ.saldo||0) - netoContribucion;
       await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
