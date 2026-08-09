@@ -306,7 +306,7 @@ async function cargarCuotapartistas(){
 }
 async function cargarMovimientos(){
   const { data } = await sb.from('movimientos_cuotapartes').select('*').eq('fondo_id', FONDO_ID).order('fecha',{ascending:true});
-  MOVIMIENTOS = (data||[]).map(r=>({ id:r.id, cuotapartistaId:r.cuotapartista_id, fecha:r.fecha, tipo:r.tipo, monto:r.monto, valorCuotaparte:r.valor_cuotaparte, cantidadCuotapartes:r.cantidad_cuotapartes, numeroComprobante:r.numero_comprobante, notas:r.notas }));
+  MOVIMIENTOS = (data||[]).map(r=>({ id:r.id, cuotapartistaId:r.cuotapartista_id, fecha:r.fecha, tipo:r.tipo, monto:r.monto, valorCuotaparte:r.valor_cuotaparte, cantidadCuotapartes:r.cantidad_cuotapartes, numeroComprobante:r.numero_comprobante, notas:r.notas, comisionPct:r.comision_pct||0, comisionMonto:r.comision_monto||0 }));
 }
 async function cargarPosiciones(){
   const { data } = await sb.from('posiciones_fondo').select('*').eq('fondo_id', FONDO_ID);
@@ -687,7 +687,7 @@ async function eliminarCuotapartista(id){
   try{
     // Los movimientos del cuotapartista se borran en cascada (FK on delete cascade);
     // acá revertimos su efecto neto sobre la liquidez del fondo antes de borrar.
-    const netoContribucion = movs.reduce((acc,m)=> acc + (m.tipo==='Suscripción'?m.monto:-m.monto), 0);
+    const netoContribucion = movs.reduce((acc,m)=> acc + (m.tipo==='Suscripción'?(m.monto-(m.comisionMonto||0)):-m.monto), 0);
     await sb.from('cuotapartistas').delete().eq('id', id);
     // Si esta persona no tiene ninguna otra posición en ningún fondo, borramos también su
     // ficha de personas (si tiene otras, la dejamos — sigue siendo cliente en otro fondo).
@@ -776,12 +776,13 @@ function showFichaCuotapartista(id){
       <h3>Historial de movimientos</h3>
       ${movs.length===0?'<div class="empty">Todavía no tiene movimientos registrados.</div>':`
       <table>
-        <tr><th>Fecha</th><th>Tipo</th><th class="right">Monto</th><th class="right">Valor cuotaparte</th><th class="right">Cuotapartes</th><th>Comprobante</th><th></th></tr>
+        <tr><th>Fecha</th><th>Tipo</th><th class="right">Monto</th><th class="right">Comisión</th><th class="right">Valor cuotaparte</th><th class="right">Cuotapartes</th><th>Comprobante</th><th></th></tr>
         ${movs.map(m=>`
           <tr>
             <td>${m.fecha}</td>
             <td><span class="tag tipo-${m.tipo}">${m.tipo}</span></td>
             <td class="right">${fmtUSD(m.monto)}</td>
+            <td class="right">${m.comisionMonto?fmtUSD(m.comisionMonto):'<span class="na">-</span>'}</td>
             <td class="right">${fmtUSD(m.valorCuotaparte)}</td>
             <td class="right">${fmtNum(m.cantidadCuotapartes)}</td>
             <td><span class="del" style="opacity:1;cursor:pointer;color:var(--gold);" onclick="imprimirComprobante('${m.id}')">${m.numeroComprobante||'ver'}</span></td>
@@ -856,6 +857,8 @@ async function guardarVinculoAcceso(id){
 }
 
 // ---------- SUSCRIPCIÓN / RESCATE ----------
+const COMISION_SUSCRIPCION_DEFAULT_PCT = 1.5;
+
 function showFormMovimiento(cuotapartistaId){
   const el = document.getElementById('ficha-cp-extra');
   if(!el) return;
@@ -865,9 +868,13 @@ function showFormMovimiento(cuotapartistaId){
       <h4 style="margin-top:0;">Nueva suscripción / rescate</h4>
       <div class="formrow">
         <div><label>Fecha</label><input type="date" id="mov-fecha" value="${new Date().toISOString().slice(0,10)}"></div>
-        <div><label>Tipo</label><select id="mov-tipo"><option value="Suscripción">Suscripción</option><option value="Rescate">Rescate</option></select></div>
+        <div><label>Tipo</label><select id="mov-tipo" onchange="toggleComisionMovimiento()"><option value="Suscripción">Suscripción</option><option value="Rescate">Rescate</option></select></div>
       </div>
-      <label>Monto (US$)</label><input type="text" id="mov-monto" placeholder="0" oninput="actualizarPreviewMovimiento()">
+      <label>Monto (US$, capital invertido / retirado)</label><input type="text" id="mov-monto" placeholder="0" oninput="actualizarPreviewMovimiento()">
+      <div class="formrow" style="margin-top:12px;" id="mov-comision-row">
+        <div><label>Comisión de suscripción (%)</label><input type="text" id="mov-comision-pct" value="${COMISION_SUSCRIPCION_DEFAULT_PCT}" oninput="actualizarPreviewMovimiento()"></div>
+        <div><label>Comisión (US$, calculado)</label><input type="text" id="mov-comision-preview" disabled></div>
+      </div>
       <div class="formrow" style="margin-top:12px;">
         <div>
           <label><input type="checkbox" id="mov-valor-manual" onchange="actualizarPreviewMovimiento()" style="width:auto;display:inline-block;margin-right:6px;">Usar otro valor de cuotaparte</label>
@@ -875,7 +882,7 @@ function showFormMovimiento(cuotapartistaId){
         </div>
         <div><label>Cuotapartes (calculado)</label><input type="text" id="mov-cantidad-preview" disabled></div>
       </div>
-      <div class="hint">Valor de cuotaparte vigente: ${valorActual!=null?fmtUSD(valorActual):'sin definir todavía (si es la primera suscripción del fondo, activá "usar otro valor" y cargá el valor de partida, ej. 100)'}.</div>
+      <div class="hint" id="mov-hint">Valor de cuotaparte vigente: ${valorActual!=null?fmtUSD(valorActual):'sin definir todavía (si es la primera suscripción del fondo, activá "usar otro valor" y cargá el valor de partida, ej. 100)'}.</div>
       <label>Notas</label><textarea id="mov-notas" style="height:60px;"></textarea>
       <button class="btn" onclick="guardarMovimiento('${cuotapartistaId}')">Registrar</button>
       <button class="btn secondary" onclick="document.getElementById('ficha-cp-extra').innerHTML=''">Cancelar</button>
@@ -888,6 +895,12 @@ function showFormMovimiento(cuotapartistaId){
   });
 }
 
+function toggleComisionMovimiento(){
+  const esSuscripcion = document.getElementById('mov-tipo').value==='Suscripción';
+  document.getElementById('mov-comision-row').style.display = esSuscripcion ? '' : 'none';
+  actualizarPreviewMovimiento();
+}
+
 function valorCuotapartaSeleccionado(){
   const manual = document.getElementById('mov-valor-manual').checked;
   if(manual){
@@ -896,11 +909,22 @@ function valorCuotapartaSeleccionado(){
   }
   return valorCuotapartaActual();
 }
+// La comisión de suscripción se descuenta del monto ANTES de convertirlo en cuotapartes.
+// El monto (capital invertido) que se guarda y se usa para el rendimiento es siempre el bruto.
+function comisionSeleccionada(monto){
+  const tipo = document.getElementById('mov-tipo').value;
+  if(tipo!=='Suscripción') return 0;
+  const pct = parseFloat(String(document.getElementById('mov-comision-pct').value).replace(',','.'))||0;
+  return monto * pct / 100;
+}
 function actualizarPreviewMovimiento(){
   const monto = parseFloat(String(document.getElementById('mov-monto').value).replace(',','.'))||0;
   const valor = valorCuotapartaSeleccionado();
+  const comision = comisionSeleccionada(monto);
+  document.getElementById('mov-comision-preview').value = fmtUSD(comision).replace(/<[^>]+>/g,'');
+  const montoNeto = monto - comision;
   const preview = document.getElementById('mov-cantidad-preview');
-  preview.value = (valor!=null && valor>0) ? (monto/valor).toFixed(4) : '';
+  preview.value = (valor!=null && valor>0) ? (montoNeto/valor).toFixed(4) : '';
 }
 
 async function guardarMovimiento(cuotapartistaId){
@@ -913,16 +937,22 @@ async function guardarMovimiento(cuotapartistaId){
   if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
   if(isNaN(monto)||monto<=0){ msg.className='msg err'; msg.textContent='Ingresá un monto válido.'; return; }
   if(valorCuotaparte==null || valorCuotaparte<=0){ msg.className='msg err'; msg.textContent='No hay valor de cuotaparte definido — activá "usar otro valor" y cargá uno (ej. 100 si es la primera suscripción del fondo).'; return; }
-  const cantidadCuotapartes = monto/valorCuotaparte;
+  const comisionPct = tipo==='Suscripción' ? (parseFloat(String(document.getElementById('mov-comision-pct').value).replace(',','.'))||0) : 0;
+  const comisionMonto = monto * comisionPct / 100;
+  const montoNeto = monto - comisionMonto;
+  const cantidadCuotapartes = montoNeto/valorCuotaparte;
   const mismosTipo = MOVIMIENTOS.filter(m=>m.tipo===tipo).length + 1;
   const numeroComprobante = (tipo==='Suscripción'?'SUSC-':'RESC-') + String(mismosTipo).padStart(4,'0');
   const movId = uid();
   try{
     await sb.from('movimientos_cuotapartes').insert({
       id: movId, fondo_id: FONDO_ID, cuotapartista_id: cuotapartistaId, fecha, tipo, monto,
-      valor_cuotaparte: valorCuotaparte, cantidad_cuotapartes: cantidadCuotapartes, numero_comprobante: numeroComprobante, notas: notas||null
+      valor_cuotaparte: valorCuotaparte, cantidad_cuotapartes: cantidadCuotapartes, numero_comprobante: numeroComprobante, notas: notas||null,
+      comision_pct: comisionPct, comision_monto: comisionMonto
     });
-    const nuevoSaldo = (LIQUIDEZ.saldo||0) + (tipo==='Suscripción'?monto:-monto);
+    // La comisión es ingreso de Kairos, no se invierte: la liquidez del fondo sube solo por el
+    // monto neto en las suscripciones (en los rescates sale el monto completo solicitado).
+    const nuevoSaldo = (LIQUIDEZ.saldo||0) + (tipo==='Suscripción'?montoNeto:-monto);
     await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
     await cargarMovimientos();
     await cargarLiquidez();
@@ -944,14 +974,18 @@ function showFormEditarMovimiento(movId){
       <h4 style="margin-top:0;">Editar movimiento ${m.numeroComprobante||''}</h4>
       <div class="formrow">
         <div><label>Fecha</label><input type="date" id="editmov-fecha" value="${m.fecha}"></div>
-        <div><label>Tipo</label><select id="editmov-tipo"><option value="Suscripción" ${m.tipo==='Suscripción'?'selected':''}>Suscripción</option><option value="Rescate" ${m.tipo==='Rescate'?'selected':''}>Rescate</option></select></div>
+        <div><label>Tipo</label><select id="editmov-tipo" onchange="toggleComisionEditMovimiento()"><option value="Suscripción" ${m.tipo==='Suscripción'?'selected':''}>Suscripción</option><option value="Rescate" ${m.tipo==='Rescate'?'selected':''}>Rescate</option></select></div>
       </div>
       <div class="formrow">
-        <div><label>Monto (US$)</label><input type="text" id="editmov-monto" value="${m.monto}" oninput="recalcularCantidadEditMovimiento()"></div>
+        <div><label>Monto (US$, bruto)</label><input type="text" id="editmov-monto" value="${m.monto}" oninput="recalcularCantidadEditMovimiento()"></div>
         <div><label>Valor de cuotaparte</label><input type="text" id="editmov-valor" value="${m.valorCuotaparte}" oninput="recalcularCantidadEditMovimiento()"></div>
       </div>
+      <div class="formrow" id="editmov-comision-row" style="${m.tipo==='Suscripción'?'':'display:none;'}">
+        <div><label>Comisión de suscripción (%)</label><input type="text" id="editmov-comision-pct" value="${m.comisionPct||0}" oninput="recalcularCantidadEditMovimiento()"></div>
+        <div><label>Comisión (US$)</label><input type="text" id="editmov-comision-preview" value="${fmtUSD(m.comisionMonto||0).replace(/<[^>]+>/g,'')}" disabled></div>
+      </div>
       <label>Cantidad de cuotapartes</label><input type="text" id="editmov-cantidad" value="${m.cantidadCuotapartes}">
-      <div class="hint">Cantidad = Monto ÷ Valor de cuotaparte, recalculada automáticamente al cambiar esos dos campos. También podés escribirla a mano si necesitás corregirla sola.</div>
+      <div class="hint">Cantidad = (Monto − Comisión) ÷ Valor de cuotaparte, recalculada automáticamente. También podés escribirla a mano si necesitás corregirla sola.</div>
       <label>Notas</label><textarea id="editmov-notas" style="height:60px;">${m.notas||''}</textarea>
       <button class="btn" onclick="guardarEdicionMovimiento('${movId}')">Guardar cambios</button>
       <button class="btn secondary" onclick="document.getElementById('ficha-cp-extra').innerHTML=''">Cancelar</button>
@@ -961,11 +995,22 @@ function showFormEditarMovimiento(movId){
   `;
 }
 
+function toggleComisionEditMovimiento(){
+  const esSuscripcion = document.getElementById('editmov-tipo').value==='Suscripción';
+  document.getElementById('editmov-comision-row').style.display = esSuscripcion ? '' : 'none';
+  recalcularCantidadEditMovimiento();
+}
 function recalcularCantidadEditMovimiento(){
   const monto = parseFloat(String(document.getElementById('editmov-monto').value).replace(',','.'));
   const valor = parseFloat(String(document.getElementById('editmov-valor').value).replace(',','.'));
-  if(!isNaN(monto) && !isNaN(valor) && valor>0){
-    document.getElementById('editmov-cantidad').value = (monto/valor).toFixed(4);
+  const esSuscripcion = document.getElementById('editmov-tipo').value==='Suscripción';
+  const comisionPct = esSuscripcion ? (parseFloat(String(document.getElementById('editmov-comision-pct').value).replace(',','.'))||0) : 0;
+  if(!isNaN(monto)){
+    const comisionMonto = monto*comisionPct/100;
+    document.getElementById('editmov-comision-preview').value = fmtUSD(comisionMonto).replace(/<[^>]+>/g,'');
+    if(!isNaN(valor) && valor>0){
+      document.getElementById('editmov-cantidad').value = ((monto-comisionMonto)/valor).toFixed(4);
+    }
   }
 }
 
@@ -978,6 +1023,8 @@ async function guardarEdicionMovimiento(movId){
   const monto = parseFloat(String(document.getElementById('editmov-monto').value).replace(',','.'));
   const valorCuotaparte = parseFloat(String(document.getElementById('editmov-valor').value).replace(',','.'));
   const cantidadCuotapartes = parseFloat(String(document.getElementById('editmov-cantidad').value).replace(',','.'));
+  const comisionPct = tipo==='Suscripción' ? (parseFloat(String(document.getElementById('editmov-comision-pct').value).replace(',','.'))||0) : 0;
+  const comisionMonto = monto * comisionPct / 100;
   const notas = document.getElementById('editmov-notas').value.trim();
   if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
   if(isNaN(monto)||monto<=0){ msg.className='msg err'; msg.textContent='Ingresá un monto válido.'; return; }
@@ -985,11 +1032,12 @@ async function guardarEdicionMovimiento(movId){
   if(isNaN(cantidadCuotapartes)||cantidadCuotapartes<=0){ msg.className='msg err'; msg.textContent='Ingresá una cantidad de cuotapartes válida.'; return; }
   try{
     await sb.from('movimientos_cuotapartes').update({
-      fecha, tipo, monto, valor_cuotaparte: valorCuotaparte, cantidad_cuotapartes: cantidadCuotapartes, notas: notas||null
+      fecha, tipo, monto, valor_cuotaparte: valorCuotaparte, cantidad_cuotapartes: cantidadCuotapartes, notas: notas||null,
+      comision_pct: comisionPct, comision_monto: comisionMonto
     }).eq('id', movId);
-    // La liquidez del fondo se movió en base al monto/tipo original — ajustamos solo la diferencia.
-    const contribucionAntes = m.tipo==='Suscripción' ? m.monto : -m.monto;
-    const contribucionAhora = tipo==='Suscripción' ? monto : -monto;
+    // La liquidez del fondo se movió en base al neto/tipo original — ajustamos solo la diferencia.
+    const contribucionAntes = m.tipo==='Suscripción' ? (m.monto - (m.comisionMonto||0)) : -m.monto;
+    const contribucionAhora = tipo==='Suscripción' ? (monto - comisionMonto) : -monto;
     const delta = contribucionAhora - contribucionAntes;
     if(delta !== 0){
       const nuevoSaldo = (LIQUIDEZ.saldo||0) + delta;
@@ -1011,7 +1059,7 @@ async function eliminarMovimiento(movId){
   const msg = document.getElementById('editmov-msg');
   try{
     await sb.from('movimientos_cuotapartes').delete().eq('id', movId);
-    const contribucion = m.tipo==='Suscripción' ? m.monto : -m.monto;
+    const contribucion = m.tipo==='Suscripción' ? (m.monto - (m.comisionMonto||0)) : -m.monto;
     const nuevoSaldo = (LIQUIDEZ.saldo||0) - contribucion;
     await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
     await cargarMovimientos();
@@ -1045,6 +1093,8 @@ function imprimirComprobante(movId){
       <tr><td class="label">Fecha</td><td>${m.fecha}</td></tr>
       <tr><td class="label">Tipo de movimiento</td><td>${m.tipo}</td></tr>
       <tr><td class="label">Monto</td><td class="tot">US$ ${m.monto.toLocaleString('es-AR',{minimumFractionDigits:2})}</td></tr>
+      ${m.comisionMonto?`<tr><td class="label">Comisión de suscripción (${m.comisionPct}%)</td><td>US$ ${m.comisionMonto.toLocaleString('es-AR',{minimumFractionDigits:2})}</td></tr>
+      <tr><td class="label">Monto neto invertido</td><td>US$ ${(m.monto-m.comisionMonto).toLocaleString('es-AR',{minimumFractionDigits:2})}</td></tr>`:''}
       <tr><td class="label">Valor de cuotaparte</td><td>US$ ${m.valorCuotaparte.toLocaleString('es-AR',{minimumFractionDigits:4})}</td></tr>
       <tr><td class="label">Cantidad de cuotapartes</td><td>${m.cantidadCuotapartes.toLocaleString('es-AR',{maximumFractionDigits:4})}</td></tr>
       ${m.notas?`<tr><td class="label">Notas</td><td>${m.notas}</td></tr>`:''}
