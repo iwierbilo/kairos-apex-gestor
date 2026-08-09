@@ -73,12 +73,14 @@ tr.clickable:hover td{background:var(--panel2);}
 .msg.err{color:var(--loss);}
 .msg.ok{color:var(--gain);}
 .btn{margin-top:20px;background:var(--gold);color:#1a1408;border:none;padding:10px 22px;border-radius:6px;font-family:var(--font-body);font-weight:600;font-size:13px;cursor:pointer;}
-#login-gate{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
-#login-gate .loginbox{width:100%;max-width:340px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;text-align:center;}
-#login-gate .brand{font-size:20px;margin-bottom:2px;}
-#login-gate .subtitle{margin:0 0 22px;}
-#login-gate label{display:block;text-align:left;font-size:11px;color:var(--text2);margin:12px 0 5px;text-transform:uppercase;letter-spacing:0.4px;}
-#login-gate input{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:6px;font-family:var(--font-body);font-size:13.5px;}
+#login-gate,#recovery-gate{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
+#login-gate .loginbox,#recovery-gate .loginbox{width:100%;max-width:340px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;text-align:center;}
+#login-gate .brand,#recovery-gate .brand{font-size:20px;margin-bottom:2px;}
+#login-gate .subtitle,#recovery-gate .subtitle{margin:0 0 22px;}
+#login-gate label,#recovery-gate label{display:block;text-align:left;font-size:11px;color:var(--text2);margin:12px 0 5px;text-transform:uppercase;letter-spacing:0.4px;}
+#login-gate input,#recovery-gate input{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:6px;font-family:var(--font-body);font-size:13.5px;}
+.linkbtn{background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;padding:0;text-decoration:underline;}
+.linkbtn:hover{color:var(--gold);}
 .fondo-card{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border:1px solid var(--border);border-radius:10px;margin-bottom:12px;cursor:pointer;background:var(--panel);}
 .fondo-card:hover{border-color:var(--gold);}
 .fondo-card .fname{font-family:var(--font-display);font-size:17px;}
@@ -109,6 +111,24 @@ tr.clickable:hover td{background:var(--panel2);}
     <input type="password" id="login-password" placeholder="Contraseña" autocomplete="current-password">
     <button class="btn" style="width:100%;" onclick="hacerLogin()">Ingresar</button>
     <div id="login-msg" class="msg"></div>
+    <div style="margin-top:14px;"><button class="linkbtn" onclick="toggleRecuperarBox()">¿Olvidaste tu contraseña?</button></div>
+    <div id="recuperar-box" style="display:none;margin-top:14px;text-align:left;">
+      <label>Email para recuperar acceso</label>
+      <input type="text" id="recuperar-email" placeholder="tu@email.com">
+      <button class="btn" style="width:100%;" onclick="solicitarRecuperacion()">Enviar link de recuperación</button>
+      <div id="recuperar-msg" class="msg"></div>
+    </div>
+  </div>
+</div>
+
+<div id="recovery-gate" style="display:none;">
+  <div class="loginbox">
+    <div class="brand">KAIROS ASSET MANAGEMENT</div>
+    <p class="subtitle">Elegí una contraseña nueva</p>
+    <label>Nueva contraseña</label>
+    <input type="password" id="recovery-password" placeholder="Mínimo 6 caracteres">
+    <button class="btn" style="width:100%;" onclick="guardarNuevaPassword()">Guardar contraseña</button>
+    <div id="recovery-msg" class="msg"></div>
   </div>
 </div>
 
@@ -192,7 +212,45 @@ sb.auth.onAuthStateChange((event)=>{
     document.getElementById('app').style.display='none';
     document.getElementById('login-gate').style.display='flex';
   }
+  if(event==='PASSWORD_RECOVERY'){
+    // El link del mail de recuperación trae un token que Supabase detecta solo — a partir de
+    // acá hay una sesión temporal válida solo para poner una contraseña nueva (updateUser).
+    document.getElementById('login-gate').style.display='none';
+    document.getElementById('app').style.display='none';
+    document.getElementById('recovery-gate').style.display='flex';
+  }
 });
+
+// ---------- OLVIDÉ MI CONTRASEÑA ----------
+function toggleRecuperarBox(){
+  const box = document.getElementById('recuperar-box');
+  const abrir = box.style.display==='none';
+  box.style.display = abrir ? 'block' : 'none';
+  if(abrir){
+    const email = document.getElementById('login-email').value.trim();
+    if(email) document.getElementById('recuperar-email').value = email;
+  }
+}
+async function solicitarRecuperacion(){
+  const email = document.getElementById('recuperar-email').value.trim();
+  const msg = document.getElementById('recuperar-msg');
+  if(!email){ msg.className='msg err'; msg.textContent='Ingresá tu email.'; return; }
+  msg.className='msg'; msg.textContent='Enviando...';
+  const redirectTo = window.location.href.split('#')[0].split('?')[0];
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if(error){ msg.className='msg err'; msg.textContent='No pudimos enviar el email. Probá de nuevo en un momento.'; return; }
+  msg.className='msg ok'; msg.textContent='Te enviamos un email con un link para elegir una contraseña nueva.';
+}
+async function guardarNuevaPassword(){
+  const password = document.getElementById('recovery-password').value;
+  const msg = document.getElementById('recovery-msg');
+  if(!password || password.length<6){ msg.className='msg err'; msg.textContent='La contraseña tiene que tener al menos 6 caracteres.'; return; }
+  msg.className='msg'; msg.textContent='Guardando...';
+  const { error } = await sb.auth.updateUser({ password });
+  if(error){ msg.className='msg err'; msg.textContent='No pudimos actualizar la contraseña — pedí un nuevo link desde "Olvidé mi contraseña".'; return; }
+  document.getElementById('recovery-gate').style.display='none';
+  await mostrarApp();
+}
 
 // ---------- TU CARTERA DE INVERSIÓN (lista de fondos) ----------
 // Hoy Kairos tiene un solo fondo, pero el panel ya está armado para cuando haya más de uno:
