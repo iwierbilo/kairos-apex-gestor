@@ -73,6 +73,7 @@ tr.clickable:hover td{background:var(--panel2);}
 .msg.err{color:var(--loss);}
 .msg.ok{color:var(--gain);}
 .btn{margin-top:20px;background:var(--gold);color:#1a1408;border:none;padding:10px 22px;border-radius:6px;font-family:var(--font-body);font-weight:600;font-size:13px;cursor:pointer;}
+.btn.secondary{background:none;border:1px solid var(--border);color:var(--text2);}
 #login-gate,#recovery-gate{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
 #login-gate .loginbox,#recovery-gate .loginbox{width:100%;max-width:340px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;text-align:center;}
 #login-gate .brand,#recovery-gate .brand{font-size:20px;margin-bottom:2px;}
@@ -271,7 +272,7 @@ async function mostrarCarteraInversion(){
     <h1>Tu cartera de inversión</h1>
     <p class="subtitle">Los fondos de Kairos Asset Management donde tenés posición.</p>
     ${fondos.map(f=>`
-      <div class="fondo-card" onclick="mostrarFondoDetalle('${f.cuotapartista_id}')">
+      <div class="fondo-card" onclick="mostrarFondoDetalle('${f.cuotapartista_id}','${f.fondo_id}')">
         <div class="fname">${f.fondo_nombre}</div>
         <div class="fdata">
           <div class="f"><div class="f-label">Cuotapartes</div><div class="f-value">${fmtNum(f.cuotapartes)}</div></div>
@@ -285,7 +286,13 @@ async function mostrarCarteraInversion(){
 // Todo lo que se ve acá viene de funciones de la base (mi_ficha, mis_movimientos,
 // composicion_cartera_publica, historial_valor_cuotaparte) que ya filtran del lado del
 // servidor: nunca devuelven datos de otra persona, ni montos totales del fondo — solo % y lo propio.
-async function mostrarFondoDetalle(cuotapartistaId){
+// Documentos públicos por fondo (factsheet, etc.) — así de simple hasta que haya varios fondos
+// y reportes periódicos; en ese momento conviene pasar esto a una tabla administrable.
+const DOCUMENTOS_FONDO = {
+  apex: [ { nombre: 'Factsheet', archivo: 'docs/factsheet-apex-strategy-fund.pdf' } ]
+};
+
+async function mostrarFondoDetalle(cuotapartistaId, fondoId){
   destroyCharts();
   const main = document.getElementById('main');
   main.innerHTML = `<p class="subtitle">Cargando...</p>`;
@@ -303,11 +310,16 @@ async function mostrarFondoDetalle(cuotapartistaId){
   }
   const f = fichaRows[0];
   const rendimiento = f.rendimiento_pct;
+  const documentos = DOCUMENTOS_FONDO[fondoId] || [];
 
   main.innerHTML = `
     <button class="backlink" onclick="mostrarCarteraInversion()">← Tu cartera de inversión</button>
     <h1>${f.fondo_nombre}</h1>
     <p class="subtitle">${f.nombre}</p>
+    ${documentos.length===0?'':`
+    <div style="margin-bottom:24px;display:flex;gap:10px;flex-wrap:wrap;">
+      ${documentos.map(d=>`<a href="${d.archivo}" target="_blank" rel="noopener" class="btn secondary" style="margin-top:0;text-decoration:none;display:inline-block;">↓ ${d.nombre}</a>`).join('')}
+    </div>`}
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-label">Cuotapartes</div><div class="kpi-value">${fmtNum(f.cuotapartes)}</div></div>
       <div class="kpi"><div class="kpi-label">Valor actual</div><div class="kpi-value">${f.valor_actual!=null?fmtUSD(f.valor_actual):'<span class="na">N/D</span>'}</div></div>
