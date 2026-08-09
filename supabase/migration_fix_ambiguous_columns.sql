@@ -1,100 +1,14 @@
--- Separar "persona" (identidad) de "cuotapartista" (posición en UN fondo puntual).
+-- Corrige "column reference is ambiguous" en las funciones del panel del cliente.
 --
--- Hasta ahora una fila de `cuotapartistas` mezclaba los datos personales (nombre, documento,
--- país, email...) con la posición en el fondo (fondo_id, estado, movimientos). Como Kairos va a
--- tener más de un fondo, una misma persona podría invertir en varios — con el modelo viejo
--- necesitaría una ficha completa duplicada por cada fondo. Esta migración separa eso:
+-- Causa: al declarar `returns table(..., valor_cuotaparte numeric, ...)`, Postgres crea una
+-- variable interna con ese mismo nombre dentro de la función. Si adentro hay una consulta que
+-- usa una columna real llamada igual (valuaciones_fondo.valor_cuotaparte) sin aclarar de qué
+-- tabla es, no sabe si es la variable o la columna, y tira el error 42702.
 --
---   personas          → identidad de la persona/empresa (una fila por cliente real, sin importar
---                        en cuántos fondos invierta). Acá vive el login (auth_user_id).
---   cuotapartistas     → una fila por (persona, fondo): solo fondo_id, persona_id y estado. Los
---                        movimientos, lotes, etc. siguen colgando de cuotapartistas.id como antes
---                        (los ids no cambian, así que no hace falta tocar movimientos_cuotapartes).
---
--- Es seguro re-correrla si se corta a mitad de camino: los pasos son idempotentes donde se pudo
--- (create table if not exists, add column if not exists), salvo los "alter table ... drop column"
--- del final, que fallan silenciosamente la segunda vez si la columna ya no existe — no rompen nada.
+-- La corrección es agregar `#variable_conflict use_column` como primera línea del cuerpo de
+-- cada función: le dice a Postgres que, ante esa ambigüedad, siempre prefiera la columna de la
+-- tabla (que es lo que queríamos en las cinco funciones de acá abajo).
 
--- ============ 1. CREAR personas Y COPIAR LOS DATOS ACTUALES ============
-create table if not exists personas (
-  id text primary key,
-  tipo_persona text check (tipo_persona in ('Física','Jurídica')),
-  nombre_razon_social text not null,
-  documento text,
-  pais text,
-  provincia text,
-  localidad text,
-  email text,
-  telefono text,
-  domicilio text,
-  fecha_alta date default now(),
-  notas text,
-  auth_user_id uuid unique references auth.users(id) on delete set null,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-insert into personas (id, tipo_persona, nombre_razon_social, documento, pais, provincia, localidad, email, telefono, domicilio, fecha_alta, notas, auth_user_id, created_at)
-select id, tipo_persona, nombre_razon_social, documento, pais, provincia, localidad, email, telefono, domicilio, fecha_alta, notas, auth_user_id, created_at
-from cuotapartistas
-on conflict (id) do nothing;
-
--- ============ 2. VINCULAR cuotapartistas A SU PERSONA (mismo id — es 1 a 1 hoy) ============
-alter table cuotapartistas add column if not exists persona_id text references personas(id);
-update cuotapartistas set persona_id = id where persona_id is null;
-alter table cuotapartistas alter column persona_id set not null;
-
--- ============ 3. QUITAR DE cuotapartistas LO QUE AHORA VIVE EN personas ============
--- Primero hay que soltar las policies viejas que todavía dependen de cuotapartistas.auth_user_id
--- (si no, Postgres no deja borrar la columna).
-drop policy if exists "cliente ve su propia ficha" on cuotapartistas;
-drop policy if exists "cliente ve sus propios movimientos" on movimientos_cuotapartes;
-
-alter table cuotapartistas
-  drop column if exists tipo_persona,
-  drop column if exists nombre_razon_social,
-  drop column if exists documento,
-  drop column if exists pais,
-  drop column if exists provincia,
-  drop column if exists localidad,
-  drop column if exists email,
-  drop column if exists telefono,
-  drop column if exists domicilio,
-  drop column if exists fecha_alta,
-  drop column if exists notas,
-  drop column if exists auth_user_id,
-  drop column if exists updated_at;
-
--- ============ 4. RLS DE personas ============
-alter table personas enable row level security;
-drop policy if exists "admins acceso total" on personas;
-create policy "admins acceso total" on personas for all using (es_admin()) with check (es_admin());
-drop policy if exists "cliente ve su propia persona" on personas;
-create policy "cliente ve su propia persona" on personas for select using (auth_user_id = auth.uid());
-
--- ============ 5. ACTUALIZAR POLICIES QUE APUNTABAN A cuotapartistas.auth_user_id ============
-drop policy if exists "cliente ve su propia ficha" on cuotapartistas;
-create policy "cliente ve sus posiciones" on cuotapartistas for select using (
-  persona_id in (select id from personas where auth_user_id = auth.uid())
-);
-
-drop policy if exists "cliente ve sus propios movimientos" on movimientos_cuotapartes;
-create policy "cliente ve sus propios movimientos" on movimientos_cuotapartes for select using (
-  cuotapartista_id in (
-    select c.id from cuotapartistas c join personas p on p.id = c.persona_id
-    where p.auth_user_id = auth.uid()
-  )
-);
-
--- ============ 6. FUNCIONES DEL PANEL DEL CLIENTE — ahora multi-fondo ============
--- Todas reciben (cuando corresponde) el id de la posición puntual (cuotapartista_id) y
--- verifican que esa posición pertenezca a la persona logueada antes de devolver nada.
-
-drop function if exists mi_ficha();
-drop function if exists mis_movimientos();
-drop function if exists composicion_cartera_publica();
-
--- Lista de fondos donde la persona logueada tiene una posición — para "Tu cartera de inversión".
 create or replace function mis_fondos()
 returns table(cuotapartista_id text, fondo_id text, fondo_nombre text, cuotapartes numeric, valor_cuotaparte numeric, valor_actual numeric)
 language plpgsql security definer as $$
@@ -126,7 +40,6 @@ begin
 end;
 $$;
 
--- Detalle de UNA posición puntual (un fondo) — para cuando el cliente entra a ver ese fondo.
 create or replace function mi_ficha(p_cuotapartista_id text)
 returns table(
   nombre text, fondo_nombre text, estado text,
@@ -259,8 +172,6 @@ begin
 end;
 $$;
 
--- Historial del valor de cuotaparte de UN fondo (para el gráfico de evolución del cliente).
--- Solo valor_cuotaparte + fecha — nunca patrimonio_total ni cuotapartes_totales (revelarían AUM).
 create or replace function historial_valor_cuotaparte(p_cuotapartista_id text)
 returns table(fecha date, valor_cuotaparte numeric)
 language plpgsql security definer as $$
@@ -278,39 +189,3 @@ begin
     where vf.fondo_id = v_fondo_id order by vf.fecha asc;
 end;
 $$;
-
--- ============ 7. VINCULAR ACCESO — ahora vincula el email a la PERSONA, no a la posición ============
-create or replace function vincular_acceso_cliente(p_cuotapartista_id text, p_email text)
-returns void language plpgsql security definer as $$
-declare
-  v_user_id uuid;
-  v_persona_id text;
-begin
-  if not es_admin() then
-    raise exception 'No autorizado.';
-  end if;
-  select persona_id into v_persona_id from cuotapartistas where id = p_cuotapartista_id;
-  if v_persona_id is null then
-    raise exception 'No existe esa ficha.';
-  end if;
-  select id into v_user_id from auth.users where lower(email) = lower(p_email) limit 1;
-  if v_user_id is null then
-    raise exception 'No existe ningún usuario con ese email — creálo primero en Authentication → Users.';
-  end if;
-  update personas set auth_user_id = v_user_id where id = v_persona_id;
-end;
-$$;
-
--- ============ 8. PERMISOS ============
-revoke execute on function mis_fondos() from public, anon;
-revoke execute on function mi_ficha(text) from public, anon;
-revoke execute on function mis_movimientos(text) from public, anon;
-revoke execute on function composicion_cartera_publica(text) from public, anon;
-revoke execute on function historial_valor_cuotaparte(text) from public, anon;
-revoke execute on function vincular_acceso_cliente(text, text) from public, anon;
-grant execute on function mis_fondos() to authenticated;
-grant execute on function mi_ficha(text) to authenticated;
-grant execute on function mis_movimientos(text) to authenticated;
-grant execute on function composicion_cartera_publica(text) to authenticated;
-grant execute on function historial_valor_cuotaparte(text) to authenticated;
-grant execute on function vincular_acceso_cliente(text, text) to authenticated;
