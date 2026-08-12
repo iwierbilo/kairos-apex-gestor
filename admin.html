@@ -1,0 +1,1882 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Kairos Asset Management — Apex Strategy Fund</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="assets/geo-data.js"></script>
+<style>
+:root{
+  --bg:#0A1B1E; --panel:#123338; --panel2:#17434A; --border:#235057;
+  --text:#E9F1F0; --text2:#9AB5B9; --text3:#6B8A8E;
+  --gain:#3FA37B; --loss:#C0524A; --gold:#CDBD89;
+  --gain-bg:#16302a; --loss-bg:#331a18; --gold-bg:#3A331F;
+  --font-display:'Fraunces',serif; --font-body:'Inter',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  /* Paleta categórica (composición de cartera, etc.) — pasos oscuros, validados contra --panel oscuro. */
+  --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --series-4:#c98500;
+  --series-5:#d55181; --series-6:#008300; --series-7:#9085e9; --series-8:#e66767;
+}
+:root[data-theme="light"]{
+  --bg:#F2F5F4; --panel:#FFFFFF; --panel2:#E8EFEE; --border:#D3DEDD;
+  --text:#12282B; --text2:#4C6367; --text3:#7C9296;
+  --gain:#1E8E5A; --loss:#C23B33; --gold:#A9915C;
+  --gain-bg:#E1F4EA; --loss-bg:#FBE5E3; --gold-bg:#F2EBDA;
+  /* Mismos 8 slots, pasos claros, validados contra --panel blanco. */
+  --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100;
+  --series-5:#e87ba4; --series-6:#008300; --series-7:#4a3aa7; --series-8:#e34948;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+.app{display:flex;min-height:100vh;}
+.sidebar{width:270px;flex-shrink:0;border-right:1px solid var(--border);padding:24px 16px;background:var(--panel);}
+.brand-sub{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:24px;}
+.curtoggle{display:flex;background:var(--panel2);border-radius:6px;padding:3px;margin-bottom:12px;}
+.curtoggle button{flex:1;background:none;border:none;color:var(--text2);font-family:var(--font-mono);font-size:11.5px;padding:6px 4px;border-radius:5px;cursor:pointer;}
+.curtoggle button.active{background:var(--gold);color:#1a1408;font-weight:600;}
+.navbtn{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text2);font-family:var(--font-body);font-size:13px;padding:9px 10px;border-radius:6px;cursor:pointer;margin-bottom:2px;}
+.navbtn:hover{background:var(--panel2);color:var(--text);}
+.navbtn.active{background:var(--panel2);color:var(--text);border-left:2px solid var(--gold);}
+.clientrow{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text2);gap:6px;}
+.clientrow:hover{background:var(--panel2);}
+.clientrow.active{background:var(--panel2);color:var(--text);}
+.clientrow .cname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.clientrow .del{opacity:0;color:var(--text3);font-size:11px;flex-shrink:0;}
+.clientrow:hover .del{opacity:1;}
+.badge-mini{font-size:9px;padding:1px 5px;border-radius:20px;background:var(--panel2);color:var(--text3);flex-shrink:0;}
+.navgroup-label{font-size:10.5px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin:20px 0 6px 10px;}
+.navgroup-label:first-of-type{margin-top:2px;}
+.main{flex:1;padding:32px 40px;max-width:1080px;}
+h1{font-family:var(--font-display);font-weight:500;font-size:26px;margin:0 0 4px;}
+.subtitle{color:var(--text2);font-size:13px;margin:0 0 28px;}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px;}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;}
+.kpi-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;}
+.kpi-value{font-family:var(--font-mono);font-size:22px;font-weight:500;}
+.kpi-value.gain{color:var(--gain);}
+.kpi-value.loss{color:var(--loss);}
+.kpi-var{font-family:var(--font-mono);font-size:12px;margin-top:4px;color:var(--text2);}
+.gain{color:var(--gain);}
+.loss{color:var(--loss);}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:24px;}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:24px;}
+.panel h3{font-size:13px;font-weight:500;color:var(--text2);margin:0 0 14px;text-transform:uppercase;letter-spacing:0.5px;}
+table{width:100%;border-collapse:collapse;font-size:12.5px;}
+th{text-align:left;color:var(--text3);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.4px;padding:6px 8px;border-bottom:1px solid var(--border);}
+td{padding:7px 8px;border-bottom:1px solid var(--border);font-family:var(--font-mono);}
+td.name{font-family:var(--font-body);}
+tr:last-child td{border-bottom:none;}
+tr.clickable:hover td{background:var(--panel2);cursor:pointer;}
+.tag{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;background:var(--panel2);color:var(--text2);font-family:var(--font-body);}
+.tag.tipo-Suscripción{background:var(--gain-bg);color:var(--gain);}
+.tag.tipo-Rescate{background:var(--loss-bg);color:var(--loss);}
+.tag.tipo-Compra{background:var(--gain-bg);color:var(--gain);}
+.tag.tipo-Venta{background:var(--loss-bg);color:var(--loss);}
+.right{text-align:right;}
+.na{color:var(--text3);}
+.formbox{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:24px;max-width:760px;}
+.formbox h4{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.6px;margin:24px 0 4px;padding-top:14px;border-top:1px solid var(--border);}
+.formbox h4:first-of-type{border-top:none;padding-top:0;margin-top:0;}
+.formrow{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.formbox label{display:block;font-size:11px;color:var(--text2);margin:12px 0 5px;text-transform:uppercase;letter-spacing:0.4px;}
+.formbox input[type=text],.formbox input[type=date],.formbox input[type=number],.formbox select{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:6px;font-family:var(--font-body);font-size:13.5px;}
+.formbox textarea{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:10px 12px;border-radius:6px;font-family:var(--font-mono);font-size:11px;height:90px;resize:vertical;}
+.hint{font-size:11px;color:var(--text3);margin-top:4px;line-height:1.5;}
+.btn{margin-top:20px;background:var(--gold);color:#1a1408;border:none;padding:10px 22px;border-radius:6px;font-family:var(--font-body);font-weight:600;font-size:13px;cursor:pointer;}
+.btn.secondary{background:none;border:1px solid var(--border);color:var(--text2);}
+.btn.small{padding:6px 12px;font-size:12px;margin-top:0;}
+.msg{font-size:12px;margin-top:12px;}
+.msg.err{color:var(--loss);}
+.msg.ok{color:var(--gain);}
+.empty{color:var(--text3);font-size:13px;padding:40px 0;text-align:center;}
+.fichagrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px 20px;}
+.fichagrid .f{font-size:13px;}
+.fichagrid .f-label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;}
+.iconbtn{background:none;border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:8px 10px;cursor:pointer;font-size:12px;}
+.tabbar{display:flex;gap:0;margin:8px 0 24px;border-bottom:1px solid var(--border);}
+.tabbtn{background:none;border:none;color:var(--text2);font-family:var(--font-body);font-size:13.5px;padding:10px 2px;margin-right:24px;cursor:pointer;border-bottom:2px solid transparent;}
+.tabbtn:hover:not(:disabled){color:var(--text);}
+.tabbtn.active{color:var(--text);border-bottom-color:var(--gold);font-weight:600;}
+.clientdetail-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;gap:12px;}
+.clientdetail-header .actions{display:flex;gap:8px;flex-shrink:0;}
+.notebox{font-size:11px;color:var(--text3);background:var(--panel2);border-radius:8px;padding:10px 14px;margin-top:6px;line-height:1.6;}
+.logoutbtn{width:100%;text-align:left;background:none;border:1px solid var(--border);color:var(--text2);font-size:12px;padding:7px 10px;border-radius:6px;cursor:pointer;margin-bottom:14px;}
+.logoutbtn:hover{color:var(--text);border-color:var(--gold);}
+#login-gate,#recovery-gate{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100;}
+#login-gate .loginbox,#recovery-gate .loginbox{width:100%;max-width:340px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px;text-align:center;}
+#login-gate img,#recovery-gate img{max-width:220px;margin-bottom:18px;}
+#login-gate .subtitle,#recovery-gate .subtitle{margin:0 0 22px;}
+#login-gate label,#recovery-gate label{display:block;text-align:left;font-size:11px;color:var(--text2);margin:12px 0 5px;text-transform:uppercase;letter-spacing:0.4px;}
+#login-gate input,#recovery-gate input{width:100%;background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 11px;border-radius:6px;font-family:var(--font-body);font-size:13.5px;}
+.linkbtn{background:none;border:none;color:var(--text3);font-size:11px;cursor:pointer;padding:0;text-decoration:underline;}
+.linkbtn:hover{color:var(--gold);}
+</style>
+</head>
+<body>
+<div id="login-gate">
+  <div class="loginbox">
+    <img src="assets/kairos-logo.png" alt="Kairos Asset Management">
+    <p class="subtitle">Apex Strategy Fund — acceso interno</p>
+    <label>Email</label>
+    <input type="text" id="login-email" placeholder="tu@email.com" autocomplete="username">
+    <label style="margin-top:10px;">Contraseña</label>
+    <input type="password" id="login-password" placeholder="Contraseña" autocomplete="current-password">
+    <button class="btn" style="width:100%;" onclick="hacerLogin()">Ingresar</button>
+    <div id="login-msg" class="msg"></div>
+    <div style="margin-top:14px;"><button class="linkbtn" onclick="toggleRecuperarBox()">¿Olvidaste tu contraseña?</button></div>
+    <div id="recuperar-box" style="display:none;margin-top:14px;text-align:left;">
+      <label>Email para recuperar acceso</label>
+      <input type="text" id="recuperar-email" placeholder="tu@email.com">
+      <button class="btn" style="width:100%;" onclick="solicitarRecuperacion()">Enviar link de recuperación</button>
+      <div id="recuperar-msg" class="msg"></div>
+    </div>
+  </div>
+</div>
+
+<div id="recovery-gate" style="display:none;">
+  <div class="loginbox">
+    <p class="subtitle">Elegí una contraseña nueva</p>
+    <label>Nueva contraseña</label>
+    <input type="password" id="recovery-password" placeholder="Mínimo 6 caracteres">
+    <button class="btn" style="width:100%;" onclick="guardarNuevaPassword()">Guardar contraseña</button>
+    <div id="recovery-msg" class="msg"></div>
+  </div>
+</div>
+<div class="app" style="display:none;">
+  <div class="sidebar">
+    <div style="background:#fff;border-radius:8px;padding:10px 12px;margin-bottom:10px;"><img src="assets/kairos-logo.png" style="width:100%;display:block;"></div>
+    <div class="brand-sub">Kairos Asset Management</div>
+    <button class="logoutbtn" onclick="hacerLogout()">Cerrar sesión (<span id="logout-user"></span>)</button>
+    <div class="curtoggle">
+      <button id="theme-dark" class="active" onclick="setTheme('dark')">Oscuro</button>
+      <button id="theme-light" onclick="setTheme('light')">Claro</button>
+    </div>
+    <div class="navgroup-label">Inicio</div>
+    <button class="navbtn active" id="nav-inicio" onclick="showInicioKairos()">Panel principal</button>
+    <div class="navgroup-label">Apex Strategy Fund</div>
+    <button class="navbtn" id="nav-cuotapartistas" onclick="showCuotapartistas()">Cuotapartistas</button>
+    <button class="navbtn" id="nav-cartera" onclick="showCarteraFondo()">Cartera del Fondo</button>
+    <button class="navbtn" id="nav-operaciones" onclick="showOperacionesFondo()">Operaciones</button>
+    <button class="navbtn" id="nav-opciones" onclick="showAnalisisOpciones()">Análisis de Opciones</button>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+
+<script>
+// ---------- SUPABASE: conexión y autenticación ----------
+const SUPABASE_URL = 'https://avupggkgqarbxzlpzzfk.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_E7pVPg9JH910s4pT6TXx2A_n7w0EAmg';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const FINNHUB_API_KEY = 'd999kqhr01qssj122n0gd999kqhr01qssj122n10';
+const FONDO_ID = 'apex';
+
+async function hacerLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const msg = document.getElementById('login-msg');
+  msg.className='msg'; msg.textContent='Ingresando...';
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ msg.className='msg err'; msg.textContent='Email o contraseña incorrectos.'; return; }
+  await mostrarApp();
+}
+async function hacerLogout(){
+  await sb.auth.signOut();
+  document.querySelector('.app').style.display='none';
+  document.getElementById('login-gate').style.display='flex';
+  document.getElementById('login-email').value='';
+  document.getElementById('login-password').value='';
+}
+async function mostrarApp(){
+  const { data:{session} } = await sb.auth.getSession();
+  if(!session) return;
+  document.getElementById('login-gate').style.display='none';
+  document.querySelector('.app').style.display='flex';
+  document.getElementById('logout-user').textContent = session.user.email;
+  await iniciarApp();
+}
+async function checkSession(){
+  const { data:{session} } = await sb.auth.getSession();
+  if(session) await mostrarApp();
+}
+sb.auth.onAuthStateChange((event)=>{
+  if(event==='SIGNED_OUT'){
+    document.querySelector('.app').style.display='none';
+    document.getElementById('login-gate').style.display='flex';
+  }
+  if(event==='PASSWORD_RECOVERY'){
+    // El link del mail de recuperación trae un token que Supabase detecta solo — a partir de
+    // acá hay una sesión temporal válida solo para poner una contraseña nueva (updateUser).
+    document.getElementById('login-gate').style.display='none';
+    document.querySelector('.app').style.display='none';
+    document.getElementById('recovery-gate').style.display='flex';
+  }
+});
+
+// ---------- OLVIDÉ MI CONTRASEÑA ----------
+function toggleRecuperarBox(){
+  const box = document.getElementById('recuperar-box');
+  const abrir = box.style.display==='none';
+  box.style.display = abrir ? 'block' : 'none';
+  if(abrir){
+    const email = document.getElementById('login-email').value.trim();
+    if(email) document.getElementById('recuperar-email').value = email;
+  }
+}
+async function solicitarRecuperacion(){
+  const email = document.getElementById('recuperar-email').value.trim();
+  const msg = document.getElementById('recuperar-msg');
+  if(!email){ msg.className='msg err'; msg.textContent='Ingresá tu email.'; return; }
+  msg.className='msg'; msg.textContent='Enviando...';
+  // redirectTo apunta a esta misma página — al volver del mail, onAuthStateChange detecta
+  // el evento PASSWORD_RECOVERY solo y muestra el formulario de contraseña nueva.
+  const redirectTo = window.location.href.split('#')[0].split('?')[0];
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if(error){ msg.className='msg err'; msg.textContent='No pudimos enviar el email. Probá de nuevo en un momento.'; return; }
+  msg.className='msg ok'; msg.textContent='Te enviamos un email con un link para elegir una contraseña nueva.';
+}
+async function guardarNuevaPassword(){
+  const password = document.getElementById('recovery-password').value;
+  const msg = document.getElementById('recovery-msg');
+  if(!password || password.length<6){ msg.className='msg err'; msg.textContent='La contraseña tiene que tener al menos 6 caracteres.'; return; }
+  msg.className='msg'; msg.textContent='Guardando...';
+  const { error } = await sb.auth.updateUser({ password });
+  if(error){ msg.className='msg err'; msg.textContent='No pudimos actualizar la contraseña — pedí un nuevo link desde "Olvidé mi contraseña".'; return; }
+  document.getElementById('recovery-gate').style.display='none';
+  await mostrarApp();
+}
+
+function setTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme-kairos', theme);
+  document.getElementById('theme-dark').classList.toggle('active', theme==='dark');
+  document.getElementById('theme-light').classList.toggle('active', theme==='light');
+}
+function initTheme(){
+  const theme = localStorage.getItem('theme-kairos') || 'dark';
+  setTheme(theme);
+}
+
+const uid = () => 'k_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+const fmtUSD = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : (n<0?'-':'') + 'US$' + Math.abs(n).toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtNum = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : Number(n).toLocaleString('es-AR',{maximumFractionDigits:4});
+const fmtPct = n => (n==null||isNaN(n)) ? '<span class="na">-</span>' : (n>=0?'+':'') + n.toLocaleString('es-AR',{minimumFractionDigits:2,maximumFractionDigits:2}) + '%';
+
+let currentView = 'inicio';
+let currentCuotapartistaId = null;
+let chartRefs = [];
+function destroyCharts(){ chartRefs.forEach(c=>c.destroy()); chartRefs=[]; }
+function setNav(id){
+  document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
+  const b = id?document.getElementById(id):null;
+  if(b) b.classList.add('active');
+}
+
+// ---------- ESTADO Y CARGA DE DATOS ----------
+let PERSONAS = {};
+let CUOTAPARTISTAS = {};
+let MOVIMIENTOS = [];
+let POSICIONES = [];
+let OPERACIONES = [];
+let LIQUIDEZ = { saldo: 0 };
+let VALUACIONES = [];
+let LOTES = [];
+let RESULTADOS = [];
+let ANALISIS_OPCIONES = [];
+
+async function cargarCuotapartistas(){
+  // "personas" tiene la identidad (nombre, documento, contacto, login...); "cuotapartistas" es
+  // la posición puntual de esa persona en ESTE fondo (fondo_id, estado). Se combinan acá para que
+  // el resto del código admin siga viendo un solo objeto por cliente, como antes.
+  const { data: personasData } = await sb.from('personas').select('*');
+  PERSONAS = {};
+  for(const r of (personasData||[])){
+    PERSONAS[r.id] = { id:r.id, tipoPersona:r.tipo_persona, nombreRazonSocial:r.nombre_razon_social, documento:r.documento, pais:r.pais, provincia:r.provincia, localidad:r.localidad, email:r.email, telefono:r.telefono, domicilio:r.domicilio, fechaAlta:r.fecha_alta, notas:r.notas, authUserId:r.auth_user_id };
+  }
+  const { data } = await sb.from('cuotapartistas').select('*').eq('fondo_id', FONDO_ID);
+  CUOTAPARTISTAS = {};
+  for(const r of (data||[])){
+    const persona = PERSONAS[r.persona_id] || {};
+    CUOTAPARTISTAS[r.id] = { ...persona, id:r.id, personaId:r.persona_id, fondoId:r.fondo_id, estado:r.estado };
+  }
+}
+async function cargarMovimientos(){
+  const { data } = await sb.from('movimientos_cuotapartes').select('*').eq('fondo_id', FONDO_ID).order('fecha',{ascending:true});
+  MOVIMIENTOS = (data||[]).map(r=>({ id:r.id, cuotapartistaId:r.cuotapartista_id, fecha:r.fecha, tipo:r.tipo, monto:r.monto, valorCuotaparte:r.valor_cuotaparte, cantidadCuotapartes:r.cantidad_cuotapartes, numeroComprobante:r.numero_comprobante, notas:r.notas, comisionPct:r.comision_pct||0, comisionMonto:r.comision_monto||0 }));
+}
+async function cargarPosiciones(){
+  const { data } = await sb.from('posiciones_fondo').select('*').eq('fondo_id', FONDO_ID);
+  POSICIONES = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, precioActual:r.precio_actual }));
+}
+async function cargarOperaciones(){
+  const { data } = await sb.from('operaciones_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha',{ascending:false});
+  OPERACIONES = (data||[]).map(r=>({ id:r.id, fecha:r.fecha, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, tipoOperacion:r.tipo_operacion, cantidad:r.cantidad, precio:r.precio, comision:r.comision, notas:r.notas }));
+}
+async function cargarLiquidez(){
+  const { data } = await sb.from('liquidez_fondo').select('*').eq('fondo_id', FONDO_ID).single();
+  LIQUIDEZ = data ? { saldo: data.saldo } : { saldo: 0 };
+}
+async function cargarValuaciones(){
+  const { data } = await sb.from('valuaciones_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha',{ascending:true});
+  VALUACIONES = (data||[]).map(r=>({ fecha:r.fecha, patrimonioTotal:r.patrimonio_total, cuotapartesTotales:r.cuotapartes_totales, valorCuotaparte:r.valor_cuotaparte }));
+}
+async function cargarLotes(){
+  const { data } = await sb.from('lotes_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha_apertura',{ascending:true});
+  LOTES = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, fechaApertura:r.fecha_apertura, cantidadOriginal:r.cantidad_original, cantidadRestante:r.cantidad_restante, precioApertura:r.precio_apertura, comisionApertura:r.comision_apertura, operacionAperturaId:r.operacion_apertura_id }));
+}
+async function cargarResultados(){
+  const { data } = await sb.from('resultados_realizados_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha_cierre',{ascending:false});
+  RESULTADOS = (data||[]).map(r=>({ id:r.id, tipoActivo:r.tipo_activo, ticker:r.ticker, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, strike:r.strike, vencimiento:r.vencimiento, fechaApertura:r.fecha_apertura, fechaCierre:r.fecha_cierre, cantidad:r.cantidad, precioApertura:r.precio_apertura, precioCierre:r.precio_cierre, comisionApertura:r.comision_apertura, comisionCierre:r.comision_cierre, resultado:r.resultado, diasEnPosicion:r.dias_en_posicion }));
+}
+async function cargarAnalisisOpciones(){
+  const { data } = await sb.from('analisis_opciones').select('*').eq('fondo_id', FONDO_ID).order('fecha_analisis',{ascending:false});
+  ANALISIS_OPCIONES = (data||[]).map(r=>({ id:r.id, fechaAnalisis:r.fecha_analisis, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, posicion:r.posicion, strike:r.strike, vencimiento:r.vencimiento, prima:r.prima, contratos:r.contratos, delta:r.delta, gamma:r.gamma, theta:r.theta, vega:r.vega, rho:r.rho, iv:r.iv, volatilidadHistorica:r.volatilidad_historica, volumen:r.volumen, interesAbierto:r.interes_abierto, notas:r.notas }));
+}
+async function cargarTodo(){
+  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados(), cargarAnalisisOpciones()]);
+}
+
+// ---------- CÁLCULOS DEL FONDO ----------
+function clavePosicion(p){ return (p.ticker||'')+'|'+(p.tipoOpcion||'')+'|'+(p.strike||'')+'|'+(p.vencimiento||''); }
+
+// Agrega los lotes abiertos (cantidadRestante>0) por instrumento: cantidad total y precio de entrada promedio ponderado.
+function posicionesAgregadas(){
+  const grupos = {};
+  for(const l of LOTES){
+    if(l.cantidadRestante<=0) continue;
+    const clave = clavePosicion(l);
+    if(!grupos[clave]) grupos[clave] = { tipoActivo:l.tipoActivo, ticker:l.ticker, subyacente:l.subyacente, tipoOpcion:l.tipoOpcion, strike:l.strike, vencimiento:l.vencimiento, cantidad:0, costoTotal:0 };
+    grupos[clave].cantidad += l.cantidadRestante;
+    grupos[clave].costoTotal += l.cantidadRestante*l.precioApertura;
+  }
+  return Object.values(grupos).map(g=>{
+    const precioCache = POSICIONES.find(p=>clavePosicion(p)===clavePosicion(g));
+    return { ...g, precioPromedio: g.cantidad>0 ? g.costoTotal/g.cantidad : 0, precioActual: precioCache ? precioCache.precioActual : null };
+  });
+}
+function valorMercadoPosicion(p){
+  const mult = p.tipoActivo==='Opción' ? 100 : 1;
+  const precio = p.precioActual!=null ? p.precioActual : (p.precioPromedio||0);
+  return (precio||0) * (p.cantidad||0) * mult;
+}
+function patrimonioCartera(){ return posicionesAgregadas().reduce((s,p)=>s+valorMercadoPosicion(p),0); }
+function resultadoRealizadoAcumulado(){ return RESULTADOS.reduce((s,r)=>s+r.resultado,0); }
+function patrimonioTotalFondo(){ return patrimonioCartera() + (LIQUIDEZ.saldo||0); }
+
+// Composición % del patrimonio del fondo (cartera + liquidez), para el gráfico de torta.
+// Es la misma para todos los cuotapartistas — cada uno está expuesto proporcionalmente a esta mezcla.
+// Si hay más de 8 rubros, los más chicos se agrupan en "Otros" para que el gráfico siga siendo legible.
+function composicionCarteraFondo(){
+  const total = patrimonioTotalFondo();
+  if(total<=0) return [];
+  const items = posicionesAgregadas().map(p=>({ label:p.ticker, valor:valorMercadoPosicion(p) })).filter(i=>i.valor>0);
+  if((LIQUIDEZ.saldo||0)>0) items.push({ label:'Liquidez', valor:LIQUIDEZ.saldo });
+  items.sort((a,b)=>b.valor-a.valor);
+  const MAX_SLICES = 8;
+  let visibles = items;
+  if(items.length>MAX_SLICES){
+    const principales = items.slice(0,MAX_SLICES-1);
+    const restoValor = items.slice(MAX_SLICES-1).reduce((s,i)=>s+i.valor,0);
+    visibles = [...principales, { label:'Otros', valor:restoValor }];
+  }
+  return visibles.map(i=>({ ...i, pct: i.valor/total*100 }));
+}
+function cuotapartesTotalesFondo(){
+  return MOVIMIENTOS.reduce((s,m)=> s + (m.tipo==='Suscripción'?m.cantidadCuotapartes:-m.cantidadCuotapartes), 0);
+}
+function valorCuotapartaActual(){
+  const total = cuotapartesTotalesFondo();
+  if(total<=0) return null;
+  return patrimonioTotalFondo()/total;
+}
+function tenenciaCuotapartista(id){
+  return MOVIMIENTOS.filter(m=>m.cuotapartistaId===id).reduce((s,m)=> s + (m.tipo==='Suscripción'?m.cantidadCuotapartes:-m.cantidadCuotapartes), 0);
+}
+// Rendimiento % sobre el total aportado: (lo que tiene hoy + lo que ya rescató - lo que suscribió) / lo que suscribió.
+// Al usar cuotapartes, cada suscripción ya "entra" al valor de cuotaparte de su fecha — por eso no hace falta
+// ponderar por tiempo para comparar aportes en distintos momentos, a diferencia de comparar montos en dólares crudos.
+function rendimientoCuotapartista(id){
+  const movs = MOVIMIENTOS.filter(m=>m.cuotapartistaId===id);
+  const totalSuscripto = movs.filter(m=>m.tipo==='Suscripción').reduce((s,m)=>s+m.monto,0);
+  const totalRescatado = movs.filter(m=>m.tipo==='Rescate').reduce((s,m)=>s+m.monto,0);
+  if(totalSuscripto<=0) return null;
+  const valorCuota = valorCuotapartaActual();
+  if(valorCuota==null) return null;
+  const valorActual = tenenciaCuotapartista(id)*valorCuota;
+  return ((valorActual + totalRescatado - totalSuscripto) / totalSuscripto) * 100;
+}
+function displayNombre(cp){ return cp ? cp.nombreRazonSocial : '(sin nombre)'; }
+
+function renderTodo(){
+  if(currentView==='inicio') showInicioKairos();
+  else if(currentView==='cuotapartistas') showCuotapartistas();
+  else if(currentView==='ficha') showFichaCuotapartista(currentCuotapartistaId);
+  else if(currentView==='cartera') showCarteraFondo();
+  else if(currentView==='operaciones') showOperacionesFondo();
+  else if(currentView==='opciones') showAnalisisOpciones();
+}
+
+// ---------- PANEL PRINCIPAL ----------
+function showInicioKairos(){
+  currentView='inicio'; setNav('nav-inicio');
+  destroyCharts();
+  const main = document.getElementById('main');
+  const patrimonio = patrimonioTotalFondo();
+  const valorCuota = valorCuotapartaActual();
+  const cuotapartes = cuotapartesTotalesFondo();
+  const activos = Object.values(CUOTAPARTISTAS).filter(c=>c.estado==='Activo').length;
+  main.innerHTML = `
+    <h1>Apex Strategy Fund</h1>
+    <p class="subtitle">Panel de gestión — Kairos Asset Management</p>
+    <div style="margin-bottom:24px;"><a href="docs/factsheet-apex-strategy-fund.pdf" target="_blank" rel="noopener" class="btn secondary" style="margin-top:0;text-decoration:none;display:inline-block;">↓ Reglamento de Apex SF</a></div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Patrimonio total</div><div class="kpi-value">${fmtUSD(patrimonio)}</div></div>
+      <div class="kpi"><div class="kpi-label">Valor de cuotaparte</div><div class="kpi-value">${valorCuota!=null?fmtUSD(valorCuota):'<span class="na">N/D</span>'}</div></div>
+      <div class="kpi"><div class="kpi-label">Cuotapartes en circulación</div><div class="kpi-value">${fmtNum(cuotapartes)}</div></div>
+      <div class="kpi"><div class="kpi-label">Cuotapartistas activos</div><div class="kpi-value">${activos}</div></div>
+      <div class="kpi"><div class="kpi-label">Resultado realizado acumulado</div><div class="kpi-value">${fmtUSD(resultadoRealizadoAcumulado())}</div></div>
+    </div>
+    <div class="panel">
+      <h3>Evolución del valor de cuotaparte</h3>
+      ${VALUACIONES.length===0?'<div class="empty">Todavía no hay historial. Se registra cada vez que actualizás la cartera del fondo.</div>':'<div style="position:relative;height:260px;"><canvas id="chart-valuacion"></canvas></div>'}
+    </div>
+    <div class="panel">
+      <h3>Liquidez y cartera</h3>
+      <div class="fichagrid">
+        <div class="f"><div class="f-label">Liquidez disponible</div>${fmtUSD(LIQUIDEZ.saldo)}</div>
+        <div class="f"><div class="f-label">Valor de mercado de la cartera</div>${fmtUSD(patrimonioCartera())}</div>
+        <div class="f"><div class="f-label">Posiciones</div>${posicionesAgregadas().length}</div>
+      </div>
+    </div>
+  `;
+  if(VALUACIONES.length>0){
+    const ctx = document.getElementById('chart-valuacion');
+    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text2').trim();
+    const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+    const chart = new Chart(ctx, {
+      type:'line',
+      data:{ labels: VALUACIONES.map(v=>v.fecha), datasets:[{ label:'Valor de cuotaparte (US$)', data: VALUACIONES.map(v=>v.valorCuotaparte), borderColor:'#C9A24B', backgroundColor:'transparent', pointRadius:2, borderWidth:2, tension:0.15 }] },
+      options:{ responsive:true, maintainAspectRatio:false, scales:{ x:{ ticks:{color:textColor}, grid:{color:gridColor} }, y:{ ticks:{color:textColor, callback:v=>'US$'+v}, grid:{color:gridColor} } }, plugins:{ legend:{display:false} } }
+    });
+    chartRefs.push(chart);
+  }
+}
+
+// ---------- CUOTAPARTISTAS ----------
+function showCuotapartistas(){
+  currentView='cuotapartistas'; setNav('nav-cuotapartistas');
+  destroyCharts();
+  const main = document.getElementById('main');
+  const valorCuota = valorCuotapartaActual();
+  const ids = Object.keys(CUOTAPARTISTAS).sort((a,b)=>displayNombre(CUOTAPARTISTAS[a]).localeCompare(displayNombre(CUOTAPARTISTAS[b])));
+  main.innerHTML = `
+    <div class="clientdetail-header">
+      <h1>Cuotapartistas</h1>
+      <div class="actions"><button class="btn small" onclick="showFichaCuotapartista(null)">+ Nuevo cuotapartista</button></div>
+    </div>
+    <p class="subtitle">Inversores de Apex Strategy Fund.</p>
+    ${ids.length===0?'<div class="empty">Todavía no cargaste ningún cuotapartista.</div>':`
+    <div class="panel">
+      <table>
+        <tr><th>Nombre</th><th>Tipo</th><th class="right">Cuotapartes</th><th class="right">Valor actual</th><th class="right">Rendimiento</th><th>Estado</th><th></th></tr>
+        ${ids.map(id=>{
+          const cp = CUOTAPARTISTAS[id];
+          const tenencia = tenenciaCuotapartista(id);
+          const valor = valorCuota!=null ? tenencia*valorCuota : null;
+          const rendimiento = rendimientoCuotapartista(id);
+          return `
+          <tr class="clickable" onclick="showFichaCuotapartista('${id}')">
+            <td class="name">${displayNombre(cp)}</td>
+            <td><span class="badge-mini">${cp.tipoPersona==='Jurídica'?'Jur.':'Fís.'}</span></td>
+            <td class="right">${fmtNum(tenencia)}</td>
+            <td class="right">${valor!=null?fmtUSD(valor):'<span class="na">N/D</span>'}</td>
+            <td class="right ${rendimiento==null?'':(rendimiento>=0?'gain':'loss')}">${fmtPct(rendimiento)}</td>
+            <td><span class="tag">${cp.estado}</span></td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--loss);" onclick="event.stopPropagation(); eliminarCuotapartista('${id}')">eliminar</span></td>
+          </tr>`;
+        }).join('')}
+      </table>
+    </div>`}
+  `;
+}
+
+// Países con selector en cascada de Provincia/Estado y Localidad.
+// AR usa la API pública de georef.gob.ar en vivo; el resto usa datos estáticos (GEO_ESTADOS_LOCALIDADES).
+const GEO_CASCADA_PAISES = ['AR','UY','CL','VE','MX','BR'];
+
+function normalizarTexto(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim(); }
+
+function codigoPorNombrePais(nombre){
+  if(!nombre) return '';
+  const target = normalizarTexto(nombre);
+  const found = Object.entries(GEO_PAISES_ES||{}).find(([,n])=>normalizarTexto(n)===target);
+  return found ? found[0] : '';
+}
+
+function paisesOptions(codigoSeleccionado){
+  const entradas = Object.entries(GEO_PAISES_ES||{}).sort((a,b)=>a[1].localeCompare(b[1]));
+  return '<option value="">Seleccionar…</option>' + entradas.map(([code,nombre])=>
+    `<option value="${code}" ${code===codigoSeleccionado?'selected':''}>${nombre}</option>`).join('');
+}
+
+// Lee el valor "visible" de un campo que puede ser <select> (guardamos el nombre, no el código) o <input> de texto libre.
+function getCampoTexto(id){
+  const el = document.getElementById(id);
+  if(!el) return '';
+  if(el.tagName==='SELECT') return el.selectedOptions[0] ? el.selectedOptions[0].textContent.trim() : '';
+  return el.value.trim();
+}
+
+function renderFormFichaCuotapartista(cp){
+  cp = cp || { tipoPersona:'Física', nombreRazonSocial:'', documento:'', pais:'', provincia:'', localidad:'', email:'', telefono:'', domicilio:'', fechaAlta:new Date().toISOString().slice(0,10), estado:'Activo', notas:'' };
+  return `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Datos del cuotapartista</h4>
+      <div class="formrow">
+        <div><label>Tipo</label><select id="cp-tipoPersona"><option ${cp.tipoPersona==='Física'?'selected':''}>Física</option><option ${cp.tipoPersona==='Jurídica'?'selected':''}>Jurídica</option></select></div>
+        <div><label>Nombre / Razón social</label><input type="text" id="cp-nombre" value="${(cp.nombreRazonSocial||'').replace(/"/g,'&quot;')}"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Documento (pasaporte / tax ID)</label><input type="text" id="cp-documento" value="${(cp.documento||'').replace(/"/g,'&quot;')}"></div>
+        <div><label>País</label><select id="cp-pais" onchange="onCambioPaisCuotapartista()">${paisesOptions(codigoPorNombrePais(cp.pais))}</select></div>
+      </div>
+      <div class="formrow">
+        <div id="cp-provincia-field"><label>Provincia / Estado</label><select id="cp-provincia" disabled><option value="">Elegí el país primero</option></select></div>
+        <div id="cp-localidad-field"><label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select></div>
+      </div>
+      <label>Domicilio (calle, altura, depto)</label><input type="text" id="cp-domicilio" value="${(cp.domicilio||'').replace(/"/g,'&quot;')}">
+      <div class="formrow">
+        <div><label>Email</label><input type="text" id="cp-email" value="${(cp.email||'').replace(/"/g,'&quot;')}"></div>
+        <div><label>Teléfono</label><input type="text" id="cp-telefono" value="${(cp.telefono||'').replace(/"/g,'&quot;')}"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Fecha de alta</label><input type="date" id="cp-fechaAlta" value="${cp.fechaAlta||''}"></div>
+        <div><label>Estado</label><select id="cp-estado"><option ${cp.estado==='Activo'?'selected':''}>Activo</option><option ${cp.estado==='Inactivo'?'selected':''}>Inactivo</option></select></div>
+      </div>
+      <label>Notas</label><textarea id="cp-notas">${cp.notas||''}</textarea>
+      <button class="btn" onclick="guardarCuotapartista('${cp.id||''}')">Guardar</button>
+      <button class="btn secondary" onclick="showCuotapartistas()">Cancelar</button>
+      <div id="cp-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+// Se llama después de insertar el formulario en el DOM: precarga País y dispara la cascada
+// hacia Provincia/Localidad, preseleccionando lo que ya estaba guardado (por nombre, no por código).
+function initGeoCuotapartista(cp){
+  onCambioPaisCuotapartista((cp&&cp.provincia)||'', (cp&&cp.localidad)||'');
+}
+
+async function onCambioPaisCuotapartista(provinciaPreset, localidadPreset){
+  const pais = document.getElementById('cp-pais').value;
+  const provField = document.getElementById('cp-provincia-field');
+  const locField = document.getElementById('cp-localidad-field');
+  if(!pais){
+    provField.innerHTML = '<label>Provincia / Estado</label><select id="cp-provincia" disabled><option value="">Elegí el país primero</option></select>';
+    locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>';
+    return;
+  }
+  if(!GEO_CASCADA_PAISES.includes(pais)){
+    // Sin datos para este país: campos de texto libre.
+    provField.innerHTML = `<label>Provincia / Estado</label><input type="text" id="cp-provincia" value="${(provinciaPreset||'').replace(/"/g,'&quot;')}">`;
+    locField.innerHTML = `<label>Localidad</label><input type="text" id="cp-localidad" value="${(localidadPreset||'').replace(/"/g,'&quot;')}">`;
+    return;
+  }
+  if(pais==='AR'){
+    provField.innerHTML = '<label>Provincia</label><select id="cp-provincia" onchange="onCambioProvinciaCuotapartista()"><option value="">Cargando…</option></select>';
+    locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>';
+    try{
+      const res = await fetch('https://apis.datos.gob.ar/georef/api/provincias?campos=id,nombre&max=30&orden=nombre');
+      const data = await res.json();
+      const sel = document.getElementById('cp-provincia');
+      if(!sel) return; // el usuario cambió de país mientras cargaba
+      sel.innerHTML = '<option value="">Seleccionar…</option>' + data.provincias.map(p=>
+        `<option value="${p.id}" ${p.nombre===provinciaPreset?'selected':''}>${p.nombre}</option>`).join('');
+      if(provinciaPreset && sel.value) await onCambioProvinciaCuotapartista(localidadPreset);
+    }catch(e){
+      provField.innerHTML = `<label>Provincia</label><input type="text" id="cp-provincia" value="${(provinciaPreset||'').replace(/"/g,'&quot;')}">`;
+      locField.innerHTML = `<label>Localidad</label><input type="text" id="cp-localidad" value="${(localidadPreset||'').replace(/"/g,'&quot;')}"><div class="hint">No se pudo cargar el listado de provincias (sin conexión) — completá a mano.</div>`;
+    }
+    return;
+  }
+  // UY / CL / VE / MX / BR: datos estáticos embebidos.
+  const datosPais = (GEO_ESTADOS_LOCALIDADES||{})[pais];
+  const estados = datosPais ? Object.entries(datosPais.s).sort((a,b)=>a[1].n.localeCompare(b[1].n)) : [];
+  provField.innerHTML = '<label>Provincia / Estado</label><select id="cp-provincia" onchange="onCambioProvinciaCuotapartista()"><option value="">Seleccionar…</option>' +
+    estados.map(([code,st])=>`<option value="${code}" ${st.n===provinciaPreset?'selected':''}>${st.n}</option>`).join('') + '</select>';
+  locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>';
+  if(provinciaPreset) onCambioProvinciaCuotapartista(localidadPreset);
+}
+
+function onCambioProvinciaCuotapartista(localidadPreset){
+  const pais = document.getElementById('cp-pais').value;
+  const provSel = document.getElementById('cp-provincia');
+  const locField = document.getElementById('cp-localidad-field');
+  if(!provSel || provSel.tagName!=='SELECT') return; // modo texto libre, no hay cascada
+
+  if(pais==='AR'){
+    const provId = provSel.value;
+    if(!provId){ locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>'; return; }
+    locField.innerHTML = '<label>Localidad</label><select id="cp-localidad"><option value="">Cargando…</option></select>';
+    return fetch(`https://apis.datos.gob.ar/georef/api/localidades?provincia=${provId}&campos=id,nombre&max=1000&orden=nombre`)
+      .then(res=>res.json())
+      .then(data=>{
+        const sel = document.getElementById('cp-localidad');
+        if(!sel) return;
+        sel.innerHTML = '<option value="">Seleccionar…</option>' + data.localidades.map(l=>
+          `<option ${l.nombre===localidadPreset?'selected':''}>${l.nombre}</option>`).join('');
+      })
+      .catch(()=>{
+        locField.innerHTML = `<label>Localidad</label><input type="text" id="cp-localidad" value="${(localidadPreset||'').replace(/"/g,'&quot;')}"><div class="hint">No se pudo cargar el listado de localidades — completá a mano.</div>`;
+      });
+  }
+
+  // UY / CL / VE / MX / BR
+  const stCode = provSel.value;
+  const datosPais = (GEO_ESTADOS_LOCALIDADES||{})[pais];
+  const st = datosPais && datosPais.s[stCode];
+  const cities = st ? st.c : [];
+  if(!stCode){ locField.innerHTML = '<label>Localidad</label><select id="cp-localidad" disabled><option value="">—</option></select>'; return; }
+  locField.innerHTML = '<label>Localidad</label><select id="cp-localidad"><option value="">Seleccionar…</option>' +
+    cities.map(c=>`<option ${c===localidadPreset?'selected':''}>${c}</option>`).join('') + '</select>';
+}
+
+async function guardarCuotapartista(id){
+  const msg = document.getElementById('cp-msg');
+  const nombre = document.getElementById('cp-nombre').value.trim();
+  if(!nombre){ msg.className='msg err'; msg.textContent='Ingresá el nombre o razón social.'; return; }
+  // "id" es el id de la posición (cuotapartista) que se está editando, si existe. La persona
+  // detrás es CUOTAPARTISTAS[id].personaId — o una nueva, si es un cuotapartista nuevo.
+  const personaRow = {
+    tipo_persona: document.getElementById('cp-tipoPersona').value,
+    nombre_razon_social: nombre,
+    documento: document.getElementById('cp-documento').value.trim() || null,
+    pais: getCampoTexto('cp-pais') || null,
+    provincia: getCampoTexto('cp-provincia') || null,
+    localidad: getCampoTexto('cp-localidad') || null,
+    email: document.getElementById('cp-email').value.trim() || null,
+    telefono: document.getElementById('cp-telefono').value.trim() || null,
+    domicilio: document.getElementById('cp-domicilio').value.trim() || null,
+    fecha_alta: document.getElementById('cp-fechaAlta').value || null,
+    notas: document.getElementById('cp-notas').value.trim() || null
+  };
+  const cpExistente = id ? CUOTAPARTISTAS[id] : null;
+  const personaId = cpExistente ? cpExistente.personaId : uid();
+  const cuotapartistaId = id || uid();
+  try{
+    await sb.from('personas').upsert({ id: personaId, ...personaRow });
+    await sb.from('cuotapartistas').upsert({ id: cuotapartistaId, fondo_id: FONDO_ID, persona_id: personaId, estado: document.getElementById('cp-estado').value });
+    await cargarCuotapartistas();
+    msg.className='msg ok'; msg.textContent='Cuotapartista guardado.';
+    setTimeout(()=>showFichaCuotapartista(cuotapartistaId), 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar.';
+  }
+}
+
+async function eliminarCuotapartista(id){
+  const cp = CUOTAPARTISTAS[id];
+  if(!cp) return;
+  const movs = MOVIMIENTOS.filter(m=>m.cuotapartistaId===id);
+  const detalle = movs.length>0 ? ` Esto borra también su historial de ${movs.length} movimiento(s) y ajusta la liquidez del fondo.` : '';
+  if(!confirm(`¿Eliminar a ${displayNombre(cp)}?${detalle} Esta acción no se puede deshacer.`)) return;
+  try{
+    // Los movimientos del cuotapartista se borran en cascada (FK on delete cascade);
+    // acá revertimos su efecto neto sobre la liquidez del fondo antes de borrar.
+    const netoContribucion = movs.reduce((acc,m)=> acc + (m.tipo==='Suscripción'?(m.monto-(m.comisionMonto||0)):-m.monto), 0);
+    await sb.from('cuotapartistas').delete().eq('id', id);
+    // Si esta persona no tiene ninguna otra posición en ningún fondo, borramos también su
+    // ficha de personas (si tiene otras, la dejamos — sigue siendo cliente en otro fondo).
+    const { data: otrasPosiciones } = await sb.from('cuotapartistas').select('id').eq('persona_id', cp.personaId).limit(1);
+    if(!otrasPosiciones || otrasPosiciones.length===0){
+      await sb.from('personas').delete().eq('id', cp.personaId);
+    }
+    if(netoContribucion !== 0){
+      const nuevoSaldo = (LIQUIDEZ.saldo||0) - netoContribucion;
+      await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    }
+    await cargarCuotapartistas();
+    await cargarMovimientos();
+    await cargarLiquidez();
+    showCuotapartistas();
+  }catch(e){
+    alert('Error al eliminar el cuotapartista.');
+  }
+}
+
+function showFichaCuotapartista(id){
+  currentView='ficha'; currentCuotapartistaId=id; setNav(null);
+  destroyCharts();
+  const main = document.getElementById('main');
+  if(!id){
+    main.innerHTML = `<h1>Nuevo cuotapartista</h1><p class="subtitle">Datos básicos del inversor.</p>${renderFormFichaCuotapartista(null)}`;
+    initGeoCuotapartista(null);
+    return;
+  }
+  const cp = CUOTAPARTISTAS[id];
+  if(!cp){ showCuotapartistas(); return; }
+  const movs = MOVIMIENTOS.filter(m=>m.cuotapartistaId===id).slice().sort((a,b)=>b.fecha.localeCompare(a.fecha));
+  const tenencia = tenenciaCuotapartista(id);
+  const valorCuota = valorCuotapartaActual();
+  const valorActual = valorCuota!=null ? tenencia*valorCuota : null;
+  const rendimiento = rendimientoCuotapartista(id);
+  const composicion = composicionCarteraFondo();
+  main.innerHTML = `
+    <div class="clientdetail-header">
+      <h1>${displayNombre(cp)}</h1>
+      <div class="actions">
+        <button class="btn secondary small" onclick="showFormEditarCuotapartista('${id}')">Editar ficha</button>
+        <button class="btn secondary small" onclick="showFormVincularAcceso('${id}')">${cp.authUserId?'Acceso de cliente: vinculado':'Vincular acceso de cliente'}</button>
+        <button class="btn small" onclick="showFormMovimiento('${id}')">Nueva suscripción / rescate</button>
+      </div>
+    </div>
+    <p class="subtitle">${cp.tipoPersona} · ${cp.email||'sin email'}</p>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Cuotapartes</div><div class="kpi-value">${fmtNum(tenencia)}</div></div>
+      <div class="kpi"><div class="kpi-label">Valor actual</div><div class="kpi-value">${valorActual!=null?fmtUSD(valorActual):'<span class="na">N/D</span>'}</div></div>
+      <div class="kpi"><div class="kpi-label">Rendimiento</div><div class="kpi-value ${rendimiento==null?'':(rendimiento>=0?'gain':'loss')}">${fmtPct(rendimiento)}</div></div>
+      <div class="kpi"><div class="kpi-label">Estado</div><div class="kpi-value" style="font-size:15px;">${cp.estado}</div></div>
+    </div>
+    <div class="panel">
+      <h3>Composición de la cartera del fondo</h3>
+      ${composicion.length===0?'<div class="empty">Todavía no hay posiciones cargadas.</div>':`
+      <div style="display:flex;gap:28px;flex-wrap:wrap;align-items:center;">
+        <div style="position:relative;width:200px;height:200px;flex-shrink:0;"><canvas id="chart-composicion-cliente"></canvas></div>
+        <table style="flex:1;min-width:200px;">
+          <tr><th>Instrumento</th><th class="right">%</th></tr>
+          ${composicion.map((c,i)=>`
+            <tr>
+              <td class="name"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--series-${(i%8)+1});margin-right:7px;"></span>${c.label}</td>
+              <td class="right">${c.pct.toFixed(1)}%</td>
+            </tr>`).join('')}
+        </table>
+      </div>
+      <div class="hint">Es la mezcla de activos de todo el fondo — tu inversión está expuesta proporcionalmente a esta composición.</div>
+      `}
+    </div>
+    <div id="ficha-cp-extra"></div>
+    <div class="panel">
+      <h3>Ficha</h3>
+      <div class="fichagrid">
+        <div class="f"><div class="f-label">Documento</div>${cp.documento||'-'}</div>
+        <div class="f"><div class="f-label">País</div>${cp.pais||'-'}</div>
+        <div class="f"><div class="f-label">Provincia / Estado</div>${cp.provincia||'-'}</div>
+        <div class="f"><div class="f-label">Localidad</div>${cp.localidad||'-'}</div>
+        <div class="f"><div class="f-label">Teléfono</div>${cp.telefono||'-'}</div>
+        <div class="f"><div class="f-label">Domicilio</div>${cp.domicilio||'-'}</div>
+        <div class="f"><div class="f-label">Alta</div>${cp.fechaAlta||'-'}</div>
+      </div>
+      ${cp.notas?`<div class="notebox">${cp.notas}</div>`:''}
+    </div>
+    <div class="panel">
+      <h3>Historial de movimientos</h3>
+      ${movs.length===0?'<div class="empty">Todavía no tiene movimientos registrados.</div>':`
+      <table>
+        <tr><th>Fecha</th><th>Tipo</th><th class="right">Monto</th><th class="right">Comisión</th><th class="right">Valor cuotaparte</th><th class="right">Cuotapartes</th><th>Comprobante</th><th></th></tr>
+        ${movs.map(m=>`
+          <tr>
+            <td>${m.fecha}</td>
+            <td><span class="tag tipo-${m.tipo}">${m.tipo}</span></td>
+            <td class="right">${fmtUSD(m.monto)}</td>
+            <td class="right">${m.comisionMonto?fmtUSD(m.comisionMonto):'<span class="na">-</span>'}</td>
+            <td class="right">${fmtUSD(m.valorCuotaparte)}</td>
+            <td class="right">${fmtNum(m.cantidadCuotapartes)}</td>
+            <td><span class="del" style="opacity:1;cursor:pointer;color:var(--gold);" onclick="imprimirComprobante('${m.id}')">${m.numeroComprobante||'ver'}</span></td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;" onclick="showFormEditarMovimiento('${m.id}')">editar</span></td>
+          </tr>`).join('')}
+      </table>`}
+    </div>
+  `;
+  if(composicion.length>0){
+    const ctx = document.getElementById('chart-composicion-cliente');
+    const rootStyle = getComputedStyle(document.documentElement);
+    const colors = composicion.map((c,i)=> rootStyle.getPropertyValue(`--series-${(i%8)+1}`).trim());
+    const panelColor = rootStyle.getPropertyValue('--panel').trim();
+    const chart = new Chart(ctx, {
+      type:'pie',
+      data:{ labels: composicion.map(c=>c.label), datasets:[{ data: composicion.map(c=>c.valor), backgroundColor: colors, borderColor: panelColor, borderWidth: 2 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ display:false }, // el detalle con % ya está en la tabla al lado
+          tooltip:{ callbacks:{ label: (ctxTip) => {
+            const c = composicion[ctxTip.dataIndex];
+            return ` ${c.label}: ${c.pct.toFixed(1)}%`;
+          }}}
+        }
+      }
+    });
+    chartRefs.push(chart);
+  }
+}
+
+function showFormEditarCuotapartista(id){
+  const el = document.getElementById('ficha-cp-extra');
+  if(!el) return;
+  el.innerHTML = renderFormFichaCuotapartista(CUOTAPARTISTAS[id]);
+  initGeoCuotapartista(CUOTAPARTISTAS[id]);
+}
+
+// ---------- ACCESO DEL CLIENTE A SU PROPIO PANEL (index.html / el subdominio de clientes) ----------
+function showFormVincularAcceso(id){
+  const el = document.getElementById('ficha-cp-extra');
+  if(!el) return;
+  const cp = CUOTAPARTISTAS[id];
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Acceso de cliente a su panel propio</h4>
+      ${cp.authUserId
+        ? `<div class="hint" style="margin-top:0;">Ya tiene acceso vinculado. Si necesitás cambiarlo a otro usuario, ingresá el nuevo email.</div>`
+        : `<div class="hint" style="margin-top:0;">Primero creá el usuario en Supabase → Authentication → Users (con el email y contraseña que le vas a pasar al cliente). Después pegá aquí ese mismo email para vincularlo a esta ficha.</div>`}
+      <label>Email del usuario (ya creado en Authentication → Users)</label>
+      <input type="text" id="vinc-email" value="${(cp.email||'').replace(/"/g,'&quot;')}" placeholder="cliente@email.com">
+      <button class="btn" onclick="guardarVinculoAcceso('${id}')">Vincular</button>
+      <button class="btn secondary" onclick="document.getElementById('ficha-cp-extra').innerHTML=''">Cancelar</button>
+      <div id="vinc-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+async function guardarVinculoAcceso(id){
+  const msg = document.getElementById('vinc-msg');
+  const email = document.getElementById('vinc-email').value.trim();
+  if(!email){ msg.className='msg err'; msg.textContent='Ingresá el email.'; return; }
+  try{
+    const { error } = await sb.rpc('vincular_acceso_cliente', { p_cuotapartista_id: id, p_email: email });
+    if(error) throw error;
+    await cargarCuotapartistas();
+    msg.className='msg ok'; msg.textContent='Acceso vinculado. Ya puede entrar a su panel con ese email.';
+    setTimeout(()=>showFichaCuotapartista(id), 500);
+  }catch(e){
+    msg.className='msg err'; msg.textContent = e.message || 'Error al vincular el acceso.';
+  }
+}
+
+// ---------- SUSCRIPCIÓN / RESCATE ----------
+const COMISION_SUSCRIPCION_DEFAULT_PCT = 1.5;
+
+function showFormMovimiento(cuotapartistaId){
+  const el = document.getElementById('ficha-cp-extra');
+  if(!el) return;
+  const valorActual = valorCuotapartaActual();
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Nueva suscripción / rescate</h4>
+      <div class="formrow">
+        <div><label>Fecha</label><input type="date" id="mov-fecha" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Tipo</label><select id="mov-tipo" onchange="toggleComisionMovimiento()"><option value="Suscripción">Suscripción</option><option value="Rescate">Rescate</option></select></div>
+      </div>
+      <label>Monto (US$, capital invertido / retirado)</label><input type="text" id="mov-monto" placeholder="0" oninput="actualizarPreviewMovimiento()">
+      <div class="formrow" style="margin-top:12px;" id="mov-comision-row">
+        <div><label>Comisión de suscripción (%)</label><input type="text" id="mov-comision-pct" value="${COMISION_SUSCRIPCION_DEFAULT_PCT}" oninput="actualizarPreviewMovimiento()"></div>
+        <div><label>Comisión (US$, calculado)</label><input type="text" id="mov-comision-preview" disabled></div>
+      </div>
+      <div class="formrow" style="margin-top:12px;">
+        <div>
+          <label><input type="checkbox" id="mov-valor-manual" onchange="actualizarPreviewMovimiento()" style="width:auto;display:inline-block;margin-right:6px;">Usar otro valor de cuotaparte</label>
+          <input type="text" id="mov-valor-cuotaparte" placeholder="${valorActual!=null?valorActual.toFixed(4):'100.0000'}" disabled oninput="actualizarPreviewMovimiento()">
+        </div>
+        <div><label>Cuotapartes (calculado)</label><input type="text" id="mov-cantidad-preview" disabled></div>
+      </div>
+      <div class="hint" id="mov-hint">Valor de cuotaparte vigente: ${valorActual!=null?fmtUSD(valorActual):'sin definir todavía (si es la primera suscripción del fondo, activá "usar otro valor" y cargá el valor de partida, ej. 100)'}.</div>
+      <label>Notas</label><textarea id="mov-notas" style="height:60px;"></textarea>
+      <button class="btn" onclick="guardarMovimiento('${cuotapartistaId}')">Registrar</button>
+      <button class="btn secondary" onclick="document.getElementById('ficha-cp-extra').innerHTML=''">Cancelar</button>
+      <div id="mov-msg" class="msg"></div>
+    </div>
+  `;
+  document.getElementById('mov-valor-manual').addEventListener('change', function(){
+    document.getElementById('mov-valor-cuotaparte').disabled = !this.checked;
+    actualizarPreviewMovimiento();
+  });
+}
+
+function toggleComisionMovimiento(){
+  const esSuscripcion = document.getElementById('mov-tipo').value==='Suscripción';
+  document.getElementById('mov-comision-row').style.display = esSuscripcion ? '' : 'none';
+  actualizarPreviewMovimiento();
+}
+
+function valorCuotapartaSeleccionado(){
+  const manual = document.getElementById('mov-valor-manual').checked;
+  if(manual){
+    const v = parseFloat(String(document.getElementById('mov-valor-cuotaparte').value).replace(',','.'));
+    return isNaN(v) ? null : v;
+  }
+  return valorCuotapartaActual();
+}
+// La comisión de suscripción se descuenta del monto ANTES de convertirlo en cuotapartes.
+// El monto (capital invertido) que se guarda y se usa para el rendimiento es siempre el bruto.
+function comisionSeleccionada(monto){
+  const tipo = document.getElementById('mov-tipo').value;
+  if(tipo!=='Suscripción') return 0;
+  const pct = parseFloat(String(document.getElementById('mov-comision-pct').value).replace(',','.'))||0;
+  return monto * pct / 100;
+}
+function actualizarPreviewMovimiento(){
+  const monto = parseFloat(String(document.getElementById('mov-monto').value).replace(',','.'))||0;
+  const valor = valorCuotapartaSeleccionado();
+  const comision = comisionSeleccionada(monto);
+  document.getElementById('mov-comision-preview').value = fmtUSD(comision).replace(/<[^>]+>/g,'');
+  const montoNeto = monto - comision;
+  const preview = document.getElementById('mov-cantidad-preview');
+  preview.value = (valor!=null && valor>0) ? (montoNeto/valor).toFixed(4) : '';
+}
+
+async function guardarMovimiento(cuotapartistaId){
+  const msg = document.getElementById('mov-msg');
+  const fecha = document.getElementById('mov-fecha').value;
+  const tipo = document.getElementById('mov-tipo').value;
+  const monto = parseFloat(String(document.getElementById('mov-monto').value).replace(',','.'));
+  const notas = document.getElementById('mov-notas').value.trim();
+  const valorCuotaparte = valorCuotapartaSeleccionado();
+  if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
+  if(isNaN(monto)||monto<=0){ msg.className='msg err'; msg.textContent='Ingresá un monto válido.'; return; }
+  if(valorCuotaparte==null || valorCuotaparte<=0){ msg.className='msg err'; msg.textContent='No hay valor de cuotaparte definido — activá "usar otro valor" y cargá uno (ej. 100 si es la primera suscripción del fondo).'; return; }
+  const comisionPct = tipo==='Suscripción' ? (parseFloat(String(document.getElementById('mov-comision-pct').value).replace(',','.'))||0) : 0;
+  const comisionMonto = monto * comisionPct / 100;
+  const montoNeto = monto - comisionMonto;
+  const cantidadCuotapartes = montoNeto/valorCuotaparte;
+  const mismosTipo = MOVIMIENTOS.filter(m=>m.tipo===tipo).length + 1;
+  const numeroComprobante = (tipo==='Suscripción'?'SUSC-':'RESC-') + String(mismosTipo).padStart(4,'0');
+  const movId = uid();
+  try{
+    await sb.from('movimientos_cuotapartes').insert({
+      id: movId, fondo_id: FONDO_ID, cuotapartista_id: cuotapartistaId, fecha, tipo, monto,
+      valor_cuotaparte: valorCuotaparte, cantidad_cuotapartes: cantidadCuotapartes, numero_comprobante: numeroComprobante, notas: notas||null,
+      comision_pct: comisionPct, comision_monto: comisionMonto
+    });
+    // La comisión es ingreso de Kairos, no se invierte: la liquidez del fondo sube solo por el
+    // monto neto en las suscripciones (en los rescates sale el monto completo solicitado).
+    const nuevoSaldo = (LIQUIDEZ.saldo||0) + (tipo==='Suscripción'?montoNeto:-monto);
+    await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    await cargarMovimientos();
+    await cargarLiquidez();
+    msg.className='msg ok'; msg.textContent='Movimiento registrado.';
+    setTimeout(()=>{ showFichaCuotapartista(cuotapartistaId); imprimirComprobante(movId); }, 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar el movimiento.';
+  }
+}
+
+// ---------- EDITAR / ELIMINAR MOVIMIENTO ----------
+function showFormEditarMovimiento(movId){
+  const m = MOVIMIENTOS.find(x=>x.id===movId);
+  if(!m) return;
+  const el = document.getElementById('ficha-cp-extra');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Editar movimiento ${m.numeroComprobante||''}</h4>
+      <div class="formrow">
+        <div><label>Fecha</label><input type="date" id="editmov-fecha" value="${m.fecha}"></div>
+        <div><label>Tipo</label><select id="editmov-tipo" onchange="toggleComisionEditMovimiento()"><option value="Suscripción" ${m.tipo==='Suscripción'?'selected':''}>Suscripción</option><option value="Rescate" ${m.tipo==='Rescate'?'selected':''}>Rescate</option></select></div>
+      </div>
+      <div class="formrow">
+        <div><label>Monto (US$, bruto)</label><input type="text" id="editmov-monto" value="${m.monto}" oninput="recalcularCantidadEditMovimiento()"></div>
+        <div><label>Valor de cuotaparte</label><input type="text" id="editmov-valor" value="${m.valorCuotaparte}" oninput="recalcularCantidadEditMovimiento()"></div>
+      </div>
+      <div class="formrow" id="editmov-comision-row" style="${m.tipo==='Suscripción'?'':'display:none;'}">
+        <div><label>Comisión de suscripción (%)</label><input type="text" id="editmov-comision-pct" value="${m.comisionPct||0}" oninput="recalcularCantidadEditMovimiento()"></div>
+        <div><label>Comisión (US$)</label><input type="text" id="editmov-comision-preview" value="${fmtUSD(m.comisionMonto||0).replace(/<[^>]+>/g,'')}" disabled></div>
+      </div>
+      <label>Cantidad de cuotapartes</label><input type="text" id="editmov-cantidad" value="${m.cantidadCuotapartes}">
+      <div class="hint">Cantidad = (Monto − Comisión) ÷ Valor de cuotaparte, recalculada automáticamente. También podés escribirla a mano si necesitás corregirla sola.</div>
+      <label>Notas</label><textarea id="editmov-notas" style="height:60px;">${m.notas||''}</textarea>
+      <button class="btn" onclick="guardarEdicionMovimiento('${movId}')">Guardar cambios</button>
+      <button class="btn secondary" onclick="document.getElementById('ficha-cp-extra').innerHTML=''">Cancelar</button>
+      <button class="btn secondary" style="color:var(--loss);" onclick="eliminarMovimiento('${movId}')">Eliminar movimiento</button>
+      <div id="editmov-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+function toggleComisionEditMovimiento(){
+  const esSuscripcion = document.getElementById('editmov-tipo').value==='Suscripción';
+  document.getElementById('editmov-comision-row').style.display = esSuscripcion ? '' : 'none';
+  recalcularCantidadEditMovimiento();
+}
+function recalcularCantidadEditMovimiento(){
+  const monto = parseFloat(String(document.getElementById('editmov-monto').value).replace(',','.'));
+  const valor = parseFloat(String(document.getElementById('editmov-valor').value).replace(',','.'));
+  const esSuscripcion = document.getElementById('editmov-tipo').value==='Suscripción';
+  const comisionPct = esSuscripcion ? (parseFloat(String(document.getElementById('editmov-comision-pct').value).replace(',','.'))||0) : 0;
+  if(!isNaN(monto)){
+    const comisionMonto = monto*comisionPct/100;
+    document.getElementById('editmov-comision-preview').value = fmtUSD(comisionMonto).replace(/<[^>]+>/g,'');
+    if(!isNaN(valor) && valor>0){
+      document.getElementById('editmov-cantidad').value = ((monto-comisionMonto)/valor).toFixed(4);
+    }
+  }
+}
+
+async function guardarEdicionMovimiento(movId){
+  const msg = document.getElementById('editmov-msg');
+  const m = MOVIMIENTOS.find(x=>x.id===movId);
+  if(!m) return;
+  const fecha = document.getElementById('editmov-fecha').value;
+  const tipo = document.getElementById('editmov-tipo').value;
+  const monto = parseFloat(String(document.getElementById('editmov-monto').value).replace(',','.'));
+  const valorCuotaparte = parseFloat(String(document.getElementById('editmov-valor').value).replace(',','.'));
+  const cantidadCuotapartes = parseFloat(String(document.getElementById('editmov-cantidad').value).replace(',','.'));
+  const comisionPct = tipo==='Suscripción' ? (parseFloat(String(document.getElementById('editmov-comision-pct').value).replace(',','.'))||0) : 0;
+  const comisionMonto = monto * comisionPct / 100;
+  const notas = document.getElementById('editmov-notas').value.trim();
+  if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
+  if(isNaN(monto)||monto<=0){ msg.className='msg err'; msg.textContent='Ingresá un monto válido.'; return; }
+  if(isNaN(valorCuotaparte)||valorCuotaparte<=0){ msg.className='msg err'; msg.textContent='Ingresá un valor de cuotaparte válido.'; return; }
+  if(isNaN(cantidadCuotapartes)||cantidadCuotapartes<=0){ msg.className='msg err'; msg.textContent='Ingresá una cantidad de cuotapartes válida.'; return; }
+  try{
+    await sb.from('movimientos_cuotapartes').update({
+      fecha, tipo, monto, valor_cuotaparte: valorCuotaparte, cantidad_cuotapartes: cantidadCuotapartes, notas: notas||null,
+      comision_pct: comisionPct, comision_monto: comisionMonto
+    }).eq('id', movId);
+    // La liquidez del fondo se movió en base al neto/tipo original — ajustamos solo la diferencia.
+    const contribucionAntes = m.tipo==='Suscripción' ? (m.monto - (m.comisionMonto||0)) : -m.monto;
+    const contribucionAhora = tipo==='Suscripción' ? (monto - comisionMonto) : -monto;
+    const delta = contribucionAhora - contribucionAntes;
+    if(delta !== 0){
+      const nuevoSaldo = (LIQUIDEZ.saldo||0) + delta;
+      await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    }
+    await cargarMovimientos();
+    await cargarLiquidez();
+    msg.className='msg ok'; msg.textContent='Movimiento actualizado.';
+    setTimeout(()=>showFichaCuotapartista(m.cuotapartistaId), 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar los cambios.';
+  }
+}
+
+async function eliminarMovimiento(movId){
+  const m = MOVIMIENTOS.find(x=>x.id===movId);
+  if(!m) return;
+  if(!confirm(`¿Eliminar el movimiento de ${m.tipo.toLowerCase()} por ${fmtUSD(m.monto).replace(/<[^>]+>/g,'')} del ${m.fecha}? Esto también revierte su efecto en la liquidez del fondo.`)) return;
+  const msg = document.getElementById('editmov-msg');
+  try{
+    await sb.from('movimientos_cuotapartes').delete().eq('id', movId);
+    const contribucion = m.tipo==='Suscripción' ? (m.monto - (m.comisionMonto||0)) : -m.monto;
+    const nuevoSaldo = (LIQUIDEZ.saldo||0) - contribucion;
+    await sb.from('liquidez_fondo').update({ saldo: nuevoSaldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    await cargarMovimientos();
+    await cargarLiquidez();
+    showFichaCuotapartista(m.cuotapartistaId);
+  }catch(e){
+    if(msg){ msg.className='msg err'; msg.textContent='Error al eliminar el movimiento.'; }
+  }
+}
+
+function imprimirComprobante(movId){
+  const m = MOVIMIENTOS.find(x=>x.id===movId);
+  if(!m) return;
+  const cp = CUOTAPARTISTAS[m.cuotapartistaId];
+  const w = window.open('', '_blank');
+  w.document.write(`
+    <html><head><title>Comprobante ${m.numeroComprobante||''}</title>
+    <style>
+      body{font-family:Georgia,'Times New Roman',serif;padding:40px;color:#111;}
+      h1{font-size:20px;margin-bottom:4px;}
+      .sub{color:#666;font-size:12px;margin-bottom:22px;}
+      table{width:100%;border-collapse:collapse;margin-top:20px;}
+      td{padding:8px 4px;border-bottom:1px solid #ddd;font-size:13px;}
+      td.label{color:#666;width:220px;}
+      .tot{font-weight:bold;font-size:15px;}
+    </style></head><body>
+    <h1>Kairos Asset Management — Apex Strategy Fund</h1>
+    <div class="sub">Comprobante de ${m.tipo} N° ${m.numeroComprobante||'-'}</div>
+    <table>
+      <tr><td class="label">Cuotapartista</td><td>${displayNombre(cp)}</td></tr>
+      <tr><td class="label">Fecha</td><td>${m.fecha}</td></tr>
+      <tr><td class="label">Tipo de movimiento</td><td>${m.tipo}</td></tr>
+      <tr><td class="label">Monto</td><td class="tot">US$ ${m.monto.toLocaleString('es-AR',{minimumFractionDigits:2})}</td></tr>
+      ${m.comisionMonto?`<tr><td class="label">Comisión de suscripción (${m.comisionPct}%)</td><td>US$ ${m.comisionMonto.toLocaleString('es-AR',{minimumFractionDigits:2})}</td></tr>
+      <tr><td class="label">Monto neto invertido</td><td>US$ ${(m.monto-m.comisionMonto).toLocaleString('es-AR',{minimumFractionDigits:2})}</td></tr>`:''}
+      <tr><td class="label">Valor de cuotaparte</td><td>US$ ${m.valorCuotaparte.toLocaleString('es-AR',{minimumFractionDigits:4})}</td></tr>
+      <tr><td class="label">Cantidad de cuotapartes</td><td>${m.cantidadCuotapartes.toLocaleString('es-AR',{maximumFractionDigits:4})}</td></tr>
+      ${m.notas?`<tr><td class="label">Notas</td><td>${m.notas}</td></tr>`:''}
+    </table>
+    </body></html>
+  `);
+  w.document.close();
+  w.print();
+}
+
+// ---------- CARTERA DEL FONDO ----------
+function showCarteraFondo(){
+  currentView='cartera'; setNav('nav-cartera');
+  destroyCharts();
+  const main = document.getElementById('main');
+  const activas = posicionesAgregadas().sort((a,b)=>valorMercadoPosicion(b)-valorMercadoPosicion(a));
+  window.__carteraPosiciones = activas; // para que showFormEditarPosicion encuentre la posición por índice
+  const resultados = RESULTADOS;
+  main.innerHTML = `
+    <h1>Cartera del Fondo</h1>
+    <p class="subtitle">Posiciones actuales de Apex Strategy Fund — se derivan de los lotes abiertos y se ajustan con el registro de operaciones.</p>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Valor de mercado cartera</div><div class="kpi-value">${fmtUSD(patrimonioCartera())}</div></div>
+      <div class="kpi"><div class="kpi-label">Liquidez disponible</div><div class="kpi-value">${fmtUSD(LIQUIDEZ.saldo)}</div></div>
+      <div class="kpi"><div class="kpi-label">Patrimonio total</div><div class="kpi-value">${fmtUSD(patrimonioTotalFondo())}</div></div>
+      <div class="kpi"><div class="kpi-label">Resultado realizado acumulado</div><div class="kpi-value">${fmtUSD(resultadoRealizadoAcumulado())}</div></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:20px;">
+      <button class="btn small" onclick="showFormPosicion()">+ Agregar posición manual</button>
+      <button class="btn secondary small" onclick="showFormAjustarLiquidez()">Ajustar liquidez</button>
+      <button class="btn secondary small" onclick="actualizarCotizacionesFondo()">Actualizar cotizaciones (acciones)</button>
+      <button class="btn secondary small" onclick="recalcularValuacion()">Recalcular valor de cuotaparte</button>
+    </div>
+    <div id="cartera-msg" class="msg"></div>
+    <div id="form-posicion-container"></div>
+    <div class="panel">
+      <h3>Posiciones</h3>
+      ${activas.length===0?'<div class="empty">Todavía no hay posiciones cargadas.</div>':`
+      <table>
+        <tr><th>Ticker</th><th>Tipo</th><th>Detalle</th><th class="right">Cantidad</th><th class="right">Precio prom.</th><th class="right">Precio actual</th><th class="right">Valor mercado</th><th></th></tr>
+        ${activas.map((p,idx)=>{
+          const detalle = p.tipoActivo==='Opción' ? `${p.subyacente||''} ${p.tipoOpcion||''} ${p.strike||''} · ${p.vencimiento||''}` : '-';
+          return `
+          <tr>
+            <td class="name">${p.ticker}</td>
+            <td><span class="badge-mini">${p.tipoActivo}</span></td>
+            <td style="font-family:var(--font-body);font-size:12px;">${detalle}</td>
+            <td class="right">${fmtNum(p.cantidad)}</td>
+            <td class="right">${fmtUSD(p.precioPromedio)}</td>
+            <td class="right">${fmtUSD(p.precioActual)}</td>
+            <td class="right">${fmtUSD(valorMercadoPosicion(p))}</td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--gold);" onclick="showFormEditarPosicion(${idx})">editar</span></td>
+          </tr>`;
+        }).join('')}
+      </table>`}
+      <div class="notebox">Las cotizaciones de acciones se pueden actualizar automáticamente (Finnhub). Las opciones no tienen fuente gratuita disponible — el precio actual de las opciones se actualiza a mano o queda en el último precio operado. La cantidad y el precio promedio se calculan a partir de los lotes de compra abiertos (FIFO).</div>
+    </div>
+    <div class="panel">
+      <h3>Resultados realizados (${resultados.length})</h3>
+      ${resultados.length===0?'<div class="empty">Todavía no se cerró ninguna posición.</div>':`
+      <table>
+        <tr><th>Ticker</th><th>Tipo</th><th class="right">Cantidad</th><th>Apertura</th><th>Cierre</th><th class="right">Días</th><th class="right">Precio apertura</th><th class="right">Precio cierre</th><th class="right">Resultado</th></tr>
+        ${resultados.map(r=>{
+          const color = r.resultado>=0 ? 'var(--pos, #1a9e5c)' : 'var(--neg, #c0392b)';
+          return `
+          <tr>
+            <td class="name">${r.ticker}</td>
+            <td><span class="badge-mini">${r.tipoActivo}</span></td>
+            <td class="right">${fmtNum(r.cantidad)}</td>
+            <td>${r.fechaApertura}</td>
+            <td>${r.fechaCierre}</td>
+            <td class="right">${r.diasEnPosicion}</td>
+            <td class="right">${fmtUSD(r.precioApertura)}</td>
+            <td class="right">${fmtUSD(r.precioCierre)}</td>
+            <td class="right" style="color:${color};font-weight:600;">${fmtUSD(r.resultado)}</td>
+          </tr>`;
+        }).join('')}
+      </table>`}
+    </div>
+  `;
+}
+
+function showFormPosicion(){
+  const el = document.getElementById('form-posicion-container');
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Agregar posición manual</h4>
+      <div class="hint" style="margin-top:0;">Para cargar la cartera inicial del fondo. No afecta la liquidez — para eso usá "Operaciones".</div>
+      <div class="formrow">
+        <div><label>Tipo de activo</label><select id="pos-tipoActivo" onchange="toggleCamposOpcionPosicion()"><option value="Acción">Acción</option><option value="Opción">Opción</option></select></div>
+        <div><label>Ticker</label><input type="text" id="pos-ticker" placeholder="AAPL"></div>
+      </div>
+      <div id="pos-campos-opcion" style="display:none;">
+        <div class="formrow">
+          <div><label>Subyacente</label><input type="text" id="pos-subyacente" placeholder="AAPL"></div>
+          <div><label>Tipo</label><select id="pos-tipoOpcion"><option value="Call">Call</option><option value="Put">Put</option></select></div>
+        </div>
+        <div class="formrow">
+          <div><label>Strike</label><input type="text" id="pos-strike" placeholder="150"></div>
+          <div><label>Vencimiento</label><input type="date" id="pos-vencimiento"></div>
+        </div>
+      </div>
+      <div class="formrow">
+        <div><label>Fecha de apertura</label><input type="date" id="pos-fechaApertura" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Cantidad</label><input type="text" id="pos-cantidad" placeholder="100"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Precio de compra</label><input type="text" id="pos-precioPromedio" placeholder="150.00"></div>
+        <div><label>Precio actual</label><input type="text" id="pos-precioActual" placeholder="150.00"></div>
+      </div>
+      <button class="btn" onclick="guardarPosicionManual()">Guardar posición</button>
+      <button class="btn secondary" onclick="document.getElementById('form-posicion-container').innerHTML=''">Cancelar</button>
+    </div>
+  `;
+}
+function toggleCamposOpcionPosicion(){
+  const esOpcion = document.getElementById('pos-tipoActivo').value==='Opción';
+  document.getElementById('pos-campos-opcion').style.display = esOpcion ? '' : 'none';
+}
+
+// ---------- AJUSTE MANUAL DE LIQUIDEZ ----------
+// Para corregir el saldo cuando no coincide con la realidad — típicamente al cargar una
+// cartera y suscripciones históricas por separado, sin reconstruir cada movimiento de caja.
+function showFormAjustarLiquidez(){
+  const el = document.getElementById('form-posicion-container');
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Ajustar liquidez disponible</h4>
+      <div class="hint" style="margin-top:0;">Saldo actual: ${fmtUSD(LIQUIDEZ.saldo)}. Este ajuste pisa el saldo directamente (no suma ni resta) — usalo para que coincida con el efectivo real del fondo hoy.</div>
+      <label>Nuevo saldo de liquidez (US$)</label><input type="text" id="ajliq-saldo" value="${LIQUIDEZ.saldo||0}">
+      <button class="btn" onclick="guardarAjusteLiquidez()">Guardar</button>
+      <button class="btn secondary" onclick="document.getElementById('form-posicion-container').innerHTML=''">Cancelar</button>
+      <div id="ajliq-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+async function guardarAjusteLiquidez(){
+  const msg = document.getElementById('ajliq-msg');
+  const saldo = parseFloat(String(document.getElementById('ajliq-saldo').value).replace(',','.'));
+  if(isNaN(saldo)){ msg.className='msg err'; msg.textContent='Ingresá un monto válido.'; return; }
+  try{
+    await sb.from('liquidez_fondo').update({ saldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+    await cargarLiquidez();
+    document.getElementById('form-posicion-container').innerHTML='';
+    showCarteraFondo();
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar el ajuste.';
+  }
+}
+
+async function actualizarPrecioCache(datos, precio){
+  const clave = clavePosicion(datos);
+  let pos = POSICIONES.find(p=>clavePosicion(p)===clave);
+  if(pos){
+    pos.precioActual = precio;
+    await sb.from('posiciones_fondo').update({ precio_actual: precio, fecha_actualizacion: new Date().toISOString() }).eq('id', pos.id);
+  } else {
+    const row = { fondo_id: FONDO_ID, tipo_activo: datos.tipoActivo, ticker: datos.ticker, subyacente: datos.subyacente||null, tipo_opcion: datos.tipoOpcion||null, strike: datos.strike||null, vencimiento: datos.vencimiento||null, precio_actual: precio, fecha_actualizacion: new Date().toISOString() };
+    const { data } = await sb.from('posiciones_fondo').insert(row).select().single();
+    if(data) POSICIONES.push({ id:data.id, tipoActivo:data.tipo_activo, ticker:data.ticker, subyacente:data.subyacente, tipoOpcion:data.tipo_opcion, strike:data.strike, vencimiento:data.vencimiento, precioActual:data.precio_actual });
+  }
+}
+
+async function guardarPosicionManual(){
+  const msg = document.getElementById('cartera-msg');
+  const tipoActivo = document.getElementById('pos-tipoActivo').value;
+  const ticker = document.getElementById('pos-ticker').value.trim().toUpperCase();
+  const fechaApertura = document.getElementById('pos-fechaApertura').value;
+  const cantidad = parseFloat(String(document.getElementById('pos-cantidad').value).replace(',','.'));
+  const precioPromedio = parseFloat(String(document.getElementById('pos-precioPromedio').value).replace(',','.'));
+  const precioActual = parseFloat(String(document.getElementById('pos-precioActual').value).replace(',','.'));
+  if(!ticker){ msg.className='msg err'; msg.textContent='Ingresá el ticker.'; return; }
+  if(!fechaApertura){ msg.className='msg err'; msg.textContent='Ingresá la fecha de apertura.'; return; }
+  if(isNaN(cantidad)||cantidad<=0){ msg.className='msg err'; msg.textContent='Ingresá la cantidad.'; return; }
+  if(isNaN(precioPromedio)){ msg.className='msg err'; msg.textContent='Ingresá el precio de compra.'; return; }
+  const datos = {
+    tipoActivo, ticker,
+    subyacente: tipoActivo==='Opción' ? (document.getElementById('pos-subyacente').value.trim().toUpperCase()||null) : null,
+    tipoOpcion: tipoActivo==='Opción' ? document.getElementById('pos-tipoOpcion').value : null,
+    strike: tipoActivo==='Opción' ? (parseFloat(String(document.getElementById('pos-strike').value).replace(',','.'))||null) : null,
+    vencimiento: tipoActivo==='Opción' ? (document.getElementById('pos-vencimiento').value||null) : null
+  };
+  const loteRow = { fondo_id: FONDO_ID, tipo_activo: datos.tipoActivo, ticker: datos.ticker, subyacente: datos.subyacente, tipo_opcion: datos.tipoOpcion, strike: datos.strike, vencimiento: datos.vencimiento, fecha_apertura: fechaApertura, cantidad_original: cantidad, cantidad_restante: cantidad, precio_apertura: precioPromedio, comision_apertura: 0, operacion_apertura_id: null };
+  try{
+    await sb.from('lotes_fondo').insert(loteRow);
+    await cargarLotes();
+    await actualizarPrecioCache(datos, isNaN(precioActual)?precioPromedio:precioActual);
+    document.getElementById('form-posicion-container').innerHTML='';
+    msg.className='msg ok'; msg.textContent='Posición agregada.';
+    showCarteraFondo();
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar la posición.';
+  }
+}
+
+// ---------- EDITAR POSICIÓN (precio actual + lotes de compra que la componen) ----------
+function showFormEditarPosicion(idx){
+  const p = (window.__carteraPosiciones||[])[idx];
+  if(!p) return;
+  const clave = clavePosicion(p);
+  const lotesAbiertos = LOTES.filter(l=>clavePosicion(l)===clave && l.cantidadRestante>0).sort((a,b)=>new Date(a.fechaApertura)-new Date(b.fechaApertura));
+  const detalle = p.tipoActivo==='Opción' ? ` ${p.tipoOpcion} ${p.strike} · ${p.vencimiento}` : '';
+  const el = document.getElementById('form-posicion-container');
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Editar posición: ${p.ticker}${detalle}</h4>
+      <div class="formrow">
+        <div><label>Precio actual (caché de mercado)</label><input type="text" id="posedit-precioActual" value="${p.precioActual??''}"></div>
+        <div style="display:flex;align-items:end;"><button class="btn secondary small" onclick="guardarPrecioActualPosicion(${idx})">Actualizar precio actual</button></div>
+      </div>
+      <h4>Lotes de compra abiertos</h4>
+      <div class="hint" style="margin-top:0;">La cantidad y el precio promedio de la posición se calculan sumando estos lotes.</div>
+      ${lotesAbiertos.length===0 ? '<div class="empty">No hay lotes abiertos para este instrumento.</div>' : lotesAbiertos.map(l=>{
+        const sinTocar = l.cantidadRestante===l.cantidadOriginal;
+        return `
+        <div class="formrow" style="align-items:end;margin-bottom:10px;">
+          <div><label>Fecha apertura</label><input type="date" id="lote-fecha-${l.id}" value="${l.fechaApertura}"></div>
+          <div><label>Cantidad${sinTocar?'':' (no editable — ya tiene ventas parciales)'}</label><input type="text" id="lote-cantidad-${l.id}" value="${l.cantidadRestante}" ${sinTocar?'':'disabled'}></div>
+        </div>
+        <div class="formrow" style="align-items:end;margin-bottom:16px;">
+          <div><label>Precio de compra</label><input type="text" id="lote-precio-${l.id}" value="${l.precioApertura}"></div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn small" onclick="guardarEdicionLote('${l.id}')">Guardar lote</button>
+            <button class="btn secondary small" style="color:var(--loss);" onclick="eliminarLote('${l.id}')">Eliminar lote</button>
+          </div>
+        </div>`;
+      }).join('')}
+      <button class="btn secondary" onclick="document.getElementById('form-posicion-container').innerHTML=''">Cerrar</button>
+      <div id="posedit-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+async function guardarPrecioActualPosicion(idx){
+  const p = (window.__carteraPosiciones||[])[idx];
+  if(!p) return;
+  const msg = document.getElementById('posedit-msg');
+  const precio = parseFloat(String(document.getElementById('posedit-precioActual').value).replace(',','.'));
+  if(isNaN(precio)){ msg.className='msg err'; msg.textContent='Ingresá un precio válido.'; return; }
+  try{
+    await actualizarPrecioCache(p, precio);
+    msg.className='msg ok'; msg.textContent='Precio actualizado.';
+    setTimeout(()=>showCarteraFondo(), 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al actualizar el precio.';
+  }
+}
+
+async function guardarEdicionLote(loteId){
+  const msg = document.getElementById('posedit-msg');
+  const l = LOTES.find(x=>x.id===loteId);
+  if(!l) return;
+  const fecha = document.getElementById(`lote-fecha-${loteId}`).value;
+  const precio = parseFloat(String(document.getElementById(`lote-precio-${loteId}`).value).replace(',','.'));
+  const sinTocar = l.cantidadRestante===l.cantidadOriginal;
+  const update = { fecha_apertura: fecha, precio_apertura: precio };
+  if(sinTocar){
+    const cantidad = parseFloat(String(document.getElementById(`lote-cantidad-${loteId}`).value).replace(',','.'));
+    if(isNaN(cantidad)||cantidad<=0){ msg.className='msg err'; msg.textContent='Ingresá una cantidad válida.'; return; }
+    update.cantidad_original = cantidad;
+    update.cantidad_restante = cantidad;
+  }
+  if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
+  if(isNaN(precio)||precio<0){ msg.className='msg err'; msg.textContent='Ingresá un precio de compra válido.'; return; }
+  try{
+    await sb.from('lotes_fondo').update(update).eq('id', loteId);
+    await cargarLotes();
+    msg.className='msg ok'; msg.textContent='Lote actualizado.';
+    setTimeout(()=>showCarteraFondo(), 300);
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar el lote.';
+  }
+}
+
+async function eliminarLote(loteId){
+  if(!confirm('¿Eliminar este lote de compra? Esta acción no se puede deshacer.')) return;
+  try{
+    await sb.from('lotes_fondo').delete().eq('id', loteId);
+    await cargarLotes();
+    showCarteraFondo();
+  }catch(e){
+    alert('Error al eliminar el lote.');
+  }
+}
+
+async function actualizarCotizacionesFondo(){
+  const msg = document.getElementById('cartera-msg');
+  msg.className='msg'; msg.textContent='Actualizando cotizaciones...';
+  const posiciones = posicionesAgregadas().filter(p=>p.tipoActivo==='Acción');
+  const tickers = [...new Set(posiciones.map(p=>p.ticker))];
+  if(tickers.length===0){ msg.className='msg'; msg.textContent='No hay acciones en cartera para actualizar.'; return; }
+  let actualizados = 0;
+  for(const t of tickers){
+    try{
+      const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_API_KEY}`);
+      const data = await res.json();
+      if(data && data.c){
+        for(const p of posiciones.filter(p=>p.ticker===t)){
+          await actualizarPrecioCache(p, data.c);
+        }
+        actualizados++;
+      }
+    }catch(e){}
+  }
+  msg.className='msg ok'; msg.textContent = actualizados+' de '+tickers.length+' cotizaciones actualizadas.';
+  showCarteraFondo();
+}
+
+async function recalcularValuacion(){
+  const msg = document.getElementById('cartera-msg');
+  const patrimonio = patrimonioTotalFondo();
+  const cuotapartes = cuotapartesTotalesFondo();
+  if(cuotapartes<=0){ msg.className='msg err'; msg.textContent='Todavía no hay cuotapartes en circulación — registrá la primera suscripción.'; return; }
+  const valor = patrimonio/cuotapartes;
+  try{
+    const { error } = await sb.from('valuaciones_fondo').upsert({ fondo_id: FONDO_ID, fecha: new Date().toISOString().slice(0,10), patrimonio_total: patrimonio, cuotapartes_totales: cuotapartes, valor_cuotaparte: valor }, { onConflict: 'fondo_id,fecha' });
+    if(error) throw error;
+    await cargarValuaciones();
+    msg.className='msg ok'; msg.textContent='Valor de cuotaparte recalculado: '+fmtUSD(valor).replace(/<[^>]+>/g,'');
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar la valuación — revisá que se haya corrido migration_valuacion_diaria.sql (agrega la restricción única fondo_id+fecha que necesita este upsert).';
+  }
+}
+
+// ---------- OPERACIONES (registro de compras/ventas) ----------
+function showOperacionesFondo(){
+  currentView='operaciones'; setNav('nav-operaciones');
+  destroyCharts();
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <h1>Operaciones</h1>
+    <p class="subtitle">Registro histórico de compras y ventas — ajusta la cartera y la liquidez del fondo automáticamente.</p>
+    <div class="formbox">
+      <h4 style="margin-top:0;">Nueva operación</h4>
+      <div class="formrow">
+        <div><label>Fecha</label><input type="date" id="op-fecha" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Tipo de operación</label><select id="op-tipoOperacion"><option value="Compra">Compra</option><option value="Venta">Venta</option></select></div>
+      </div>
+      <div class="formrow">
+        <div><label>Tipo de activo</label><select id="op-tipoActivo" onchange="toggleCamposOpcionOperacion()"><option value="Acción">Acción</option><option value="Opción">Opción</option></select></div>
+        <div><label>Ticker</label><input type="text" id="op-ticker" placeholder="AAPL"></div>
+      </div>
+      <div id="op-campos-opcion" style="display:none;">
+        <div class="formrow">
+          <div><label>Subyacente</label><input type="text" id="op-subyacente" placeholder="AAPL"></div>
+          <div><label>Tipo</label><select id="op-tipoOpcion"><option value="Call">Call</option><option value="Put">Put</option></select></div>
+        </div>
+        <div class="formrow">
+          <div><label>Strike</label><input type="text" id="op-strike" placeholder="150"></div>
+          <div><label>Vencimiento</label><input type="date" id="op-vencimiento"></div>
+        </div>
+      </div>
+      <div class="formrow">
+        <div><label>Cantidad</label><input type="text" id="op-cantidad" placeholder="100"></div>
+        <div><label>Precio</label><input type="text" id="op-precio" placeholder="150.00"></div>
+      </div>
+      <label>Comisión</label><input type="text" id="op-comision" placeholder="0">
+      <label>Notas</label><textarea id="op-notas" style="height:60px;"></textarea>
+      <button class="btn" onclick="guardarOperacion()">Registrar operación</button>
+      <div id="op-msg" class="msg"></div>
+    </div>
+    <div class="panel">
+      <h3>Historial (${OPERACIONES.length})</h3>
+      ${OPERACIONES.length===0?'<div class="empty">Todavía no hay operaciones registradas.</div>':`
+      <table>
+        <tr><th>Fecha</th><th>Ticker</th><th>Tipo</th><th class="right">Cantidad</th><th class="right">Precio</th><th class="right">Comisión</th><th class="right">Total</th></tr>
+        ${OPERACIONES.map(o=>{
+          const mult = o.tipoActivo==='Opción' ? 100 : 1;
+          const total = o.cantidad*o.precio*mult + (o.tipoOperacion==='Compra'?o.comision:-o.comision);
+          return `
+          <tr>
+            <td>${o.fecha}</td>
+            <td class="name">${o.ticker}</td>
+            <td><span class="tag tipo-${o.tipoOperacion}">${o.tipoOperacion}</span></td>
+            <td class="right">${fmtNum(o.cantidad)}</td>
+            <td class="right">${fmtUSD(o.precio)}</td>
+            <td class="right">${fmtUSD(o.comision)}</td>
+            <td class="right">${fmtUSD(total)}</td>
+          </tr>`;
+        }).join('')}
+      </table>`}
+    </div>
+  `;
+}
+function toggleCamposOpcionOperacion(){
+  const esOpcion = document.getElementById('op-tipoActivo').value==='Opción';
+  document.getElementById('op-campos-opcion').style.display = esOpcion ? '' : 'none';
+}
+
+async function guardarOperacion(){
+  const msg = document.getElementById('op-msg');
+  const fecha = document.getElementById('op-fecha').value;
+  const tipoOperacion = document.getElementById('op-tipoOperacion').value;
+  const tipoActivo = document.getElementById('op-tipoActivo').value;
+  const ticker = document.getElementById('op-ticker').value.trim().toUpperCase();
+  const cantidad = parseFloat(String(document.getElementById('op-cantidad').value).replace(',','.'));
+  const precio = parseFloat(String(document.getElementById('op-precio').value).replace(',','.'));
+  const comision = parseFloat(String(document.getElementById('op-comision').value).replace(',','.'))||0;
+  const notas = document.getElementById('op-notas').value.trim();
+  if(!fecha){ msg.className='msg err'; msg.textContent='Ingresá la fecha.'; return; }
+  if(!ticker){ msg.className='msg err'; msg.textContent='Ingresá el ticker.'; return; }
+  if(isNaN(cantidad)||cantidad<=0){ msg.className='msg err'; msg.textContent='Ingresá una cantidad válida.'; return; }
+  if(isNaN(precio)||precio<=0){ msg.className='msg err'; msg.textContent='Ingresá un precio válido.'; return; }
+  const subyacente = tipoActivo==='Opción' ? (document.getElementById('op-subyacente').value.trim().toUpperCase()||null) : null;
+  const tipoOpcion = tipoActivo==='Opción' ? document.getElementById('op-tipoOpcion').value : null;
+  const strike = tipoActivo==='Opción' ? (parseFloat(String(document.getElementById('op-strike').value).replace(',','.'))||null) : null;
+  const vencimiento = tipoActivo==='Opción' ? (document.getElementById('op-vencimiento').value||null) : null;
+  const op = { id: uid(), fecha, tipoActivo, ticker, subyacente, tipoOpcion, strike, vencimiento, tipoOperacion, cantidad, precio, comision, notas };
+  if(tipoOperacion==='Venta'){
+    const clave = clavePosicion(op);
+    const disponible = LOTES.filter(l=>clavePosicion(l)===clave && l.cantidadRestante>0).reduce((s,l)=>s+l.cantidadRestante,0);
+    if(cantidad > disponible + 1e-9){
+      msg.className='msg err'; msg.textContent=`No hay suficiente cantidad en cartera para vender (disponible: ${fmtNum(disponible)}). El fondo no opera en corto.`;
+      return;
+    }
+  }
+  try{
+    await sb.from('operaciones_fondo').insert({
+      id: op.id, fondo_id: FONDO_ID, fecha: op.fecha, tipo_activo: op.tipoActivo, ticker: op.ticker,
+      subyacente: op.subyacente, tipo_opcion: op.tipoOpcion, strike: op.strike, vencimiento: op.vencimiento,
+      tipo_operacion: op.tipoOperacion, cantidad: op.cantidad, precio: op.precio, comision: op.comision, notas: op.notas||null
+    });
+    await aplicarOperacionACartera(op);
+    await cargarOperaciones();
+    await cargarPosiciones();
+    await cargarLiquidez();
+    await cargarLotes();
+    await cargarResultados();
+    msg.className='msg ok'; msg.textContent='Operación registrada y cartera actualizada.';
+    showOperacionesFondo();
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar la operación: '+(e.message||e);
+  }
+}
+
+function diasEntre(f1,f2){ return Math.round((new Date(f2)-new Date(f1))/86400000); }
+
+async function aplicarOperacionACartera(op){
+  const clave = clavePosicion(op);
+  const mult = op.tipoActivo==='Opción' ? 100 : 1;
+  const esCompra = op.tipoOperacion==='Compra';
+  if(esCompra){
+    const loteRow = { fondo_id: FONDO_ID, tipo_activo: op.tipoActivo, ticker: op.ticker, subyacente: op.subyacente, tipo_opcion: op.tipoOpcion, strike: op.strike, vencimiento: op.vencimiento, fecha_apertura: op.fecha, cantidad_original: op.cantidad, cantidad_restante: op.cantidad, precio_apertura: op.precio, comision_apertura: op.comision, operacion_apertura_id: op.id };
+    const { data } = await sb.from('lotes_fondo').insert(loteRow).select().single();
+    if(data) LOTES.push({ id:data.id, tipoActivo:data.tipo_activo, ticker:data.ticker, subyacente:data.subyacente, tipoOpcion:data.tipo_opcion, strike:data.strike, vencimiento:data.vencimiento, fechaApertura:data.fecha_apertura, cantidadOriginal:data.cantidad_original, cantidadRestante:data.cantidad_restante, precioApertura:data.precio_apertura, comisionApertura:data.comision_apertura, operacionAperturaId:data.operacion_apertura_id });
+    await actualizarPrecioCache(op, op.precio);
+    const costo = op.cantidad*op.precio*mult + op.comision;
+    LIQUIDEZ.saldo = (LIQUIDEZ.saldo||0) - costo;
+  } else {
+    let pendiente = op.cantidad;
+    const lotesAbiertos = LOTES.filter(l=>clavePosicion(l)===clave && l.cantidadRestante>0).sort((a,b)=>new Date(a.fechaApertura)-new Date(b.fechaApertura));
+    const disponible = lotesAbiertos.reduce((s,l)=>s+l.cantidadRestante,0);
+    if(pendiente > disponible + 1e-9) throw new Error('No hay suficiente cantidad en cartera para vender. El fondo no opera en corto.');
+    for(const lote of lotesAbiertos){
+      if(pendiente<=1e-9) break;
+      const porcion = Math.min(lote.cantidadRestante, pendiente);
+      const comisionAperturaProrateada = lote.comisionApertura * (porcion/lote.cantidadOriginal);
+      const comisionCierreProrateada = op.comision * (porcion/op.cantidad);
+      const resultado = (op.precio - lote.precioApertura)*porcion*mult - comisionAperturaProrateada - comisionCierreProrateada;
+      const resultadoRow = { fondo_id: FONDO_ID, tipo_activo: op.tipoActivo, ticker: op.ticker, subyacente: op.subyacente, tipo_opcion: op.tipoOpcion, strike: op.strike, vencimiento: op.vencimiento, fecha_apertura: lote.fechaApertura, fecha_cierre: op.fecha, cantidad: porcion, precio_apertura: lote.precioApertura, precio_cierre: op.precio, comision_apertura: comisionAperturaProrateada, comision_cierre: comisionCierreProrateada, resultado, dias_en_posicion: diasEntre(lote.fechaApertura, op.fecha), operacion_cierre_id: op.id };
+      await sb.from('resultados_realizados_fondo').insert(resultadoRow);
+      lote.cantidadRestante -= porcion;
+      await sb.from('lotes_fondo').update({ cantidad_restante: lote.cantidadRestante }).eq('id', lote.id);
+      pendiente -= porcion;
+    }
+    await actualizarPrecioCache(op, op.precio);
+    const proceeds = op.cantidad*op.precio*mult - op.comision;
+    LIQUIDEZ.saldo = (LIQUIDEZ.saldo||0) + proceeds;
+  }
+  await sb.from('liquidez_fondo').update({ saldo: LIQUIDEZ.saldo, actualizado_el: new Date().toISOString() }).eq('fondo_id', FONDO_ID);
+}
+
+// ---------- GESTOR DE OPCIONES (workspace de análisis, independiente de la cartera real) ----------
+let PRECIOS_SUBYACENTES = {};
+
+function calcularMetricasOpcion(item, precioSubyacente){
+  const hoy = new Date().toISOString().slice(0,10);
+  const dte = diasEntre(hoy, item.vencimiento);
+  const esCall = item.tipoOpcion==='Call';
+  const esComprada = item.posicion==='Comprada';
+  const mult = 100*(item.contratos||1);
+  const breakeven = esCall ? item.strike+item.prima : item.strike-item.prima;
+  let maxPerdida=null, maxGanancia=null;
+  if(esCall && esComprada){ maxPerdida = item.prima*mult; maxGanancia = null; }
+  else if(esCall && !esComprada){ maxGanancia = item.prima*mult; maxPerdida = null; }
+  else if(!esCall && esComprada){ maxPerdida = item.prima*mult; maxGanancia = Math.max(item.strike-item.prima,0)*mult; }
+  else { maxGanancia = item.prima*mult; maxPerdida = Math.max(item.strike-item.prima,0)*mult; }
+  let moneyness = null;
+  if(precioSubyacente!=null){
+    if(precioSubyacente===item.strike) moneyness='ATM';
+    else if(esCall) moneyness = precioSubyacente>item.strike ? 'ITM' : 'OTM';
+    else moneyness = precioSubyacente<item.strike ? 'ITM' : 'OTM';
+  }
+  return { dte, breakeven, maxPerdida, maxGanancia, moneyness, mult, esCall, esComprada };
+}
+
+function payoffOpcion(item, precioEnVencimiento){
+  const esCall = item.tipoOpcion==='Call';
+  const esComprada = item.posicion==='Comprada';
+  const mult = 100*(item.contratos||1);
+  const valorIntrinseco = esCall ? Math.max(precioEnVencimiento-item.strike,0) : Math.max(item.strike-precioEnVencimiento,0);
+  const pnlPorAccion = esComprada ? (valorIntrinseco-item.prima) : (item.prima-valorIntrinseco);
+  return pnlPorAccion*mult;
+}
+
+function interpretacionOpcion(item, metricas, precioSubyacente){
+  const lineas = [];
+  if(metricas.dte<=0) lineas.push('Esta opción ya venció o vence hoy.');
+  else if(metricas.dte<7) lineas.push(`Quedan ${metricas.dte} días al vencimiento — ventana corta, mayor sensibilidad a theta y gamma.`);
+  else if(metricas.dte<30) lineas.push(`Quedan ${metricas.dte} días al vencimiento.`);
+  else lineas.push(`Quedan ${metricas.dte} días al vencimiento — plazo amplio, decaimiento diario relativo menor por ahora.`);
+  if(metricas.moneyness) lineas.push(`Está ${metricas.moneyness} respecto al precio actual del subyacente (${fmtUSD(precioSubyacente).replace(/<[^>]+>/g,'')}).`);
+  if(item.delta!=null) lineas.push(`Delta ${item.delta}: por cada US$1 que se mueve el subyacente, la opción se mueve aprox. US$${Math.abs(item.delta).toFixed(2)} por acción (~${Math.round(Math.abs(item.delta)*100)} acciones equivalentes por contrato).`);
+  if(item.theta!=null){
+    const pctPrima = item.prima ? Math.abs(item.theta/item.prima*100).toFixed(1) : null;
+    lineas.push(`Theta ${item.theta}: decaimiento aprox. de US$${Math.abs(item.theta).toFixed(2)} por día por acción${pctPrima?` (~${pctPrima}% de la prima actual).`:'.'}`);
+  }
+  if(item.iv!=null){
+    lineas.push(item.volatilidadHistorica!=null
+      ? `Volatilidad implícita cargada: ${item.iv}% (ver comparación contra volatilidad histórica en "Señales").`
+      : `Volatilidad implícita cargada: ${item.iv}%. Cargá también la volatilidad histórica realizada para compararla.`);
+  }
+  return lineas;
+}
+
+function calcularSenalesOpcion(item, metricas, precioSubyacente){
+  const senales = [];
+  if(item.iv!=null && item.volatilidadHistorica){
+    const ratio = item.iv/item.volatilidadHistorica;
+    if(ratio<0.85) senales.push({ tipo:'favor', texto:`IV (${item.iv}%) está por debajo de la volatilidad histórica cargada (${item.volatilidadHistorica}%) — la prima podría estar relativamente barata en términos de volatilidad.` });
+    else if(ratio>1.15) senales.push({ tipo:'contra', texto:`IV (${item.iv}%) está por encima de la volatilidad histórica cargada (${item.volatilidadHistorica}%) — la prima podría estar relativamente cara.` });
+    else senales.push({ tipo:'neutral', texto:`IV (${item.iv}%) está en línea con la volatilidad histórica cargada (${item.volatilidadHistorica}%) — sin señal clara de sobre/sub-valuación por este lado.` });
+  }
+  if(precioSubyacente!=null && item.prima){
+    const valorIntrinseco = metricas.esCall ? Math.max(precioSubyacente-item.strike,0) : Math.max(item.strike-precioSubyacente,0);
+    const valorExtrinseco = Math.max(item.prima-valorIntrinseco,0);
+    const pctExtrinseco = valorExtrinseco/item.prima*100;
+    if(pctExtrinseco>=70 && metricas.dte>0 && metricas.dte<=14) senales.push({ tipo:'contra', texto:`El ${pctExtrinseco.toFixed(0)}% de la prima es valor tiempo y quedan solo ${metricas.dte} días — riesgo alto de erosión por theta en el corto plazo.` });
+    else if(pctExtrinseco<=30) senales.push({ tipo:'neutral', texto:`Solo el ${pctExtrinseco.toFixed(0)}% de la prima es valor tiempo — la mayor parte ya es valor intrínseco.` });
+    else senales.push({ tipo:'neutral', texto:`El ${pctExtrinseco.toFixed(0)}% de la prima es valor tiempo, con ${metricas.dte} días al vencimiento.` });
+    if(item.theta!=null && valorExtrinseco>0){
+      const thetaPctDiario = Math.abs(item.theta)/valorExtrinseco*100;
+      if(thetaPctDiario>=5) senales.push({ tipo:'contra', texto:`El theta representa ~${thetaPctDiario.toFixed(1)}% del valor tiempo restante por día — erosión acelerada.` });
+    }
+  }
+  if(item.delta!=null){
+    const prob = Math.round(Math.abs(item.delta)*100);
+    senales.push({ tipo:'neutral', texto:`Probabilidad aproximada de vencer ITM (estimada a partir del delta): ~${prob}%.` });
+  }
+  return senales;
+}
+
+function showAnalisisOpciones(){
+  currentView='opciones'; setNav('nav-opciones');
+  destroyCharts();
+  const main = document.getElementById('main');
+  const items = ANALISIS_OPCIONES.slice().sort((a,b)=>b.fechaAnalisis.localeCompare(a.fechaAnalisis));
+  main.innerHTML = `
+    <h1>Análisis de Opciones</h1>
+    <p class="subtitle">Workspace de ideas — cargá los datos de la opción (los ves en tu plataforma de bróker) y obtené breakeven, pérdida/ganancia máxima, payoff al vencimiento y una lectura de las griegas. No afecta la cartera real ni la liquidez.</p>
+    <div style="display:flex;gap:10px;margin-bottom:20px;">
+      <button class="btn small" onclick="showFormAnalisisOpcion()">+ Nuevo análisis</button>
+      <button class="btn secondary small" onclick="actualizarPreciosSubyacentesAnalisis()">Actualizar precios de subyacentes</button>
+    </div>
+    <div id="opciones-msg" class="msg"></div>
+    <div id="form-analisis-container"></div>
+    <div class="panel">
+      <h3>Ideas cargadas (${items.length})</h3>
+      ${items.length===0?'<div class="empty">Todavía no cargaste ningún análisis.</div>':`
+      <table>
+        <tr><th>Subyacente</th><th>Tipo</th><th>Posición</th><th class="right">Strike</th><th>Vencimiento</th><th class="right">DTE</th><th class="right">Prima</th><th class="right">Precio subyac.</th><th></th></tr>
+        ${items.map(a=>{
+          const precio = PRECIOS_SUBYACENTES[a.subyacente];
+          const dte = diasEntre(new Date().toISOString().slice(0,10), a.vencimiento);
+          return `
+          <tr style="cursor:pointer;" onclick="showDetalleOpcionAnalisis('${a.id}')">
+            <td class="name">${a.subyacente}</td>
+            <td><span class="badge-mini">${a.tipoOpcion}</span></td>
+            <td>${a.posicion}</td>
+            <td class="right">${fmtUSD(a.strike)}</td>
+            <td>${a.vencimiento}</td>
+            <td class="right">${dte}</td>
+            <td class="right">${fmtUSD(a.prima)}</td>
+            <td class="right">${precio!=null?fmtUSD(precio):'<span class="na">-</span>'}</td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;" onclick="event.stopPropagation();eliminarAnalisisOpcion('${a.id}')">eliminar</span></td>
+          </tr>`;
+        }).join('')}
+      </table>`}
+      <div class="notebox">Hacé clic en una fila para ver el detalle: breakeven, pérdida/ganancia máxima, gráfico de payoff al vencimiento y lectura de las griegas.</div>
+    </div>
+  `;
+}
+
+function showFormAnalisisOpcion(){
+  const el = document.getElementById('form-analisis-container');
+  el.innerHTML = `
+    <div class="formbox">
+      <h4 style="margin-top:0;">Nuevo análisis de opción</h4>
+      <div class="formrow">
+        <div><label>Fecha de análisis</label><input type="date" id="an-fecha" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div><label>Subyacente</label><input type="text" id="an-subyacente" placeholder="AAPL"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Tipo</label><select id="an-tipoOpcion"><option value="Call">Call</option><option value="Put">Put</option></select></div>
+        <div><label>Posición</label><select id="an-posicion"><option value="Comprada">Comprada</option><option value="Vendida">Vendida</option></select></div>
+      </div>
+      <div class="formrow">
+        <div><label>Strike</label><input type="text" id="an-strike" placeholder="150"></div>
+        <div><label>Vencimiento</label><input type="date" id="an-vencimiento"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Prima</label><input type="text" id="an-prima" placeholder="3.50"></div>
+        <div><label>Contratos</label><input type="text" id="an-contratos" placeholder="1" value="1"></div>
+      </div>
+      <div class="hint" style="margin-top:0;">Griegas, IV, volumen e interés abierto: los ves en la cadena de opciones de tu plataforma de bróker. Todos opcionales.</div>
+      <div class="formrow">
+        <div><label>Delta</label><input type="text" id="an-delta" placeholder="0.45"></div>
+        <div><label>Gamma</label><input type="text" id="an-gamma" placeholder="0.03"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Theta</label><input type="text" id="an-theta" placeholder="-0.08"></div>
+        <div><label>Vega</label><input type="text" id="an-vega" placeholder="0.12"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Rho</label><input type="text" id="an-rho" placeholder="0.02"></div>
+        <div><label>IV %</label><input type="text" id="an-iv" placeholder="35"></div>
+      </div>
+      <div class="formrow">
+        <div><label>Volumen</label><input type="text" id="an-volumen" placeholder="1200"></div>
+        <div><label>Interés abierto</label><input type="text" id="an-interesAbierto" placeholder="4500"></div>
+      </div>
+      <label>Volatilidad histórica (realizada) % <span style="font-weight:400;color:var(--text2);">— opcional, para comparar contra la IV</span></label>
+      <input type="text" id="an-volatilidadHistorica" placeholder="28">
+      <label>Notas</label><textarea id="an-notas" style="height:60px;"></textarea>
+      <button class="btn" onclick="guardarAnalisisOpcion()">Guardar análisis</button>
+      <button class="btn secondary" onclick="document.getElementById('form-analisis-container').innerHTML=''">Cancelar</button>
+    </div>
+  `;
+}
+
+function numOrNull(v){ const n = parseFloat(String(v).replace(',','.')); return isNaN(n)?null:n; }
+
+async function guardarAnalisisOpcion(){
+  const msg = document.getElementById('opciones-msg');
+  const fechaAnalisis = document.getElementById('an-fecha').value;
+  const subyacente = document.getElementById('an-subyacente').value.trim().toUpperCase();
+  const tipoOpcion = document.getElementById('an-tipoOpcion').value;
+  const posicion = document.getElementById('an-posicion').value;
+  const strike = numOrNull(document.getElementById('an-strike').value);
+  const vencimiento = document.getElementById('an-vencimiento').value;
+  const prima = numOrNull(document.getElementById('an-prima').value);
+  const contratos = numOrNull(document.getElementById('an-contratos').value) || 1;
+  if(!subyacente){ msg.className='msg err'; msg.textContent='Ingresá el subyacente.'; return; }
+  if(!vencimiento){ msg.className='msg err'; msg.textContent='Ingresá el vencimiento.'; return; }
+  if(strike==null){ msg.className='msg err'; msg.textContent='Ingresá el strike.'; return; }
+  if(prima==null){ msg.className='msg err'; msg.textContent='Ingresá la prima.'; return; }
+  const row = {
+    id: uid(), fondo_id: FONDO_ID, fecha_analisis: fechaAnalisis, subyacente, tipo_opcion: tipoOpcion, posicion, strike, vencimiento, prima, contratos,
+    delta: numOrNull(document.getElementById('an-delta').value), gamma: numOrNull(document.getElementById('an-gamma').value),
+    theta: numOrNull(document.getElementById('an-theta').value), vega: numOrNull(document.getElementById('an-vega').value),
+    rho: numOrNull(document.getElementById('an-rho').value), iv: numOrNull(document.getElementById('an-iv').value),
+    volatilidad_historica: numOrNull(document.getElementById('an-volatilidadHistorica').value),
+    volumen: numOrNull(document.getElementById('an-volumen').value), interes_abierto: numOrNull(document.getElementById('an-interesAbierto').value),
+    notas: document.getElementById('an-notas').value.trim()||null
+  };
+  try{
+    await sb.from('analisis_opciones').insert(row);
+    await cargarAnalisisOpciones();
+    document.getElementById('form-analisis-container').innerHTML='';
+    msg.className='msg ok'; msg.textContent='Análisis guardado.';
+    showAnalisisOpciones();
+  }catch(e){
+    msg.className='msg err'; msg.textContent='Error al guardar el análisis.';
+  }
+}
+
+async function eliminarAnalisisOpcion(id){
+  if(!confirm('¿Eliminar este análisis?')) return;
+  await sb.from('analisis_opciones').delete().eq('id', id);
+  await cargarAnalisisOpciones();
+  showAnalisisOpciones();
+}
+
+async function actualizarPreciosSubyacentesAnalisis(){
+  const msg = document.getElementById('opciones-msg');
+  msg.className='msg'; msg.textContent='Actualizando precios...';
+  const tickers = [...new Set(ANALISIS_OPCIONES.map(a=>a.subyacente))];
+  if(tickers.length===0){ msg.className='msg'; msg.textContent='No hay análisis cargados.'; return; }
+  let actualizados = 0;
+  for(const t of tickers){
+    try{
+      const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${FINNHUB_API_KEY}`);
+      const data = await res.json();
+      if(data && data.c){ PRECIOS_SUBYACENTES[t] = data.c; actualizados++; }
+    }catch(e){}
+  }
+  msg.className='msg ok'; msg.textContent = actualizados+' de '+tickers.length+' precios actualizados.';
+  showAnalisisOpciones();
+}
+
+function showDetalleOpcionAnalisis(id){
+  currentView='opciones-detalle'; setNav(null);
+  destroyCharts();
+  const item = ANALISIS_OPCIONES.find(a=>a.id===id);
+  const main = document.getElementById('main');
+  if(!item){ showAnalisisOpciones(); return; }
+  const precioSubyacente = PRECIOS_SUBYACENTES[item.subyacente];
+  const metricas = calcularMetricasOpcion(item, precioSubyacente);
+  const lecturas = interpretacionOpcion(item, metricas, precioSubyacente);
+  const senales = calcularSenalesOpcion(item, metricas, precioSubyacente);
+  const colorSenal = { favor:'var(--pos, #1a9e5c)', contra:'var(--neg, #c0392b)', neutral:'var(--text2)' };
+  const iconoSenal = { favor:'✓', contra:'⚠', neutral:'·' };
+  const centro = precioSubyacente!=null ? precioSubyacente : item.strike;
+  const min = Math.min(item.strike, centro)*0.7;
+  const max = Math.max(item.strike, centro)*1.3;
+  const pasos = 40;
+  const precios = Array.from({length:pasos+1}, (_,i)=>min+(max-min)*i/pasos);
+  main.innerHTML = `
+    <div class="clientdetail-header">
+      <h1>${item.subyacente} ${item.tipoOpcion} ${fmtUSD(item.strike).replace(/<[^>]+>/g,'')} — ${item.posicion}</h1>
+      <div class="actions">
+        <button class="btn secondary small" onclick="showAnalisisOpciones()">← Volver al listado</button>
+      </div>
+    </div>
+    <p class="subtitle">Vencimiento ${item.vencimiento} · Prima ${fmtUSD(item.prima)} · ${item.contratos||1} contrato(s)</p>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Días al vencimiento</div><div class="kpi-value">${metricas.dte}</div></div>
+      <div class="kpi"><div class="kpi-label">Breakeven</div><div class="kpi-value">${fmtUSD(metricas.breakeven)}</div></div>
+      <div class="kpi"><div class="kpi-label">Pérdida máxima</div><div class="kpi-value">${metricas.maxPerdida!=null?fmtUSD(metricas.maxPerdida):'Ilimitada'}</div></div>
+      <div class="kpi"><div class="kpi-label">Ganancia máxima</div><div class="kpi-value">${metricas.maxGanancia!=null?fmtUSD(metricas.maxGanancia):'Ilimitada'}</div></div>
+    </div>
+    <div class="panel">
+      <h3>Payoff al vencimiento</h3>
+      <div style="position:relative;height:280px;"><canvas id="chart-payoff"></canvas></div>
+    </div>
+    <div class="panel">
+      <h3>Griegas y datos de mercado</h3>
+      <div class="fichagrid">
+        <div class="f"><div class="f-label">Delta</div>${item.delta??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Gamma</div>${item.gamma??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Theta</div>${item.theta??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Vega</div>${item.vega??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Rho</div>${item.rho??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">IV</div>${item.iv!=null?item.iv+'%':'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Volatilidad histórica</div>${item.volatilidadHistorica!=null?item.volatilidadHistorica+'%':'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Volumen</div>${item.volumen??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Interés abierto</div>${item.interesAbierto??'<span class="na">-</span>'}</div>
+        <div class="f"><div class="f-label">Precio subyacente</div>${precioSubyacente!=null?fmtUSD(precioSubyacente):'<span class="na">Actualizalo desde el listado</span>'}</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Señales</h3>
+      ${senales.length===0?'<div class="empty">Cargá IV + volatilidad histórica, y actualizá el precio del subyacente, para ver señales de valuación.</div>':`
+      <ul style="list-style:none;padding-left:0;">${senales.map(s=>`<li style="margin-bottom:8px;color:${colorSenal[s.tipo]};"><strong>${iconoSenal[s.tipo]}</strong> ${s.texto}</li>`).join('')}</ul>`}
+      <div class="notebox">Estas señales combinan tus datos cargados (IV, volatilidad histórica, delta, theta, DTE) en lecturas objetivas de valuación y riesgo de tiempo — no son una recomendación de compra o venta.</div>
+    </div>
+    <div class="panel">
+      <h3>Lectura</h3>
+      <ul>${lecturas.map(l=>`<li>${l}</li>`).join('')}</ul>
+      ${item.notas?`<div class="notebox">Notas: ${item.notas}</div>`:''}
+      <div class="notebox">Esta lectura describe mecánica y sensibilidad de la posición a partir de los datos cargados — no es una recomendación de inversión.</div>
+    </div>
+  `;
+  const ctx = document.getElementById('chart-payoff');
+  const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text2').trim();
+  const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+  const chart = new Chart(ctx, {
+    type:'line',
+    data:{ labels: precios.map(p=>p.toFixed(2)), datasets:[{ label:'P&L al vencimiento (US$)', data: precios.map(p=>payoffOpcion(item,p)), borderColor:'#C9A24B', backgroundColor:'transparent', pointRadius:0, borderWidth:2, tension:0 }] },
+    options:{ responsive:true, maintainAspectRatio:false, scales:{ x:{ title:{display:true,text:'Precio del subyacente',color:textColor}, ticks:{color:textColor, maxTicksLimit:8}, grid:{color:gridColor} }, y:{ ticks:{color:textColor, callback:v=>'US$'+v}, grid:{color:gridColor} } }, plugins:{ legend:{display:false} } }
+  });
+  chartRefs.push(chart);
+}
+
+// ---------- ARRANQUE ----------
+async function iniciarApp(){
+  await cargarTodo();
+  showInicioKairos();
+}
+initTheme();
+checkSession();
+</script>
+</body>
+</html>
