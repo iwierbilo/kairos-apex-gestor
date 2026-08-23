@@ -163,6 +163,7 @@ tr.clickable:hover td{background:var(--panel2);cursor:pointer;}
     <button class="navbtn" id="nav-cartera" onclick="showCarteraFondo()">Cartera del Fondo</button>
     <button class="navbtn" id="nav-operaciones" onclick="showOperacionesFondo()">Operaciones</button>
     <button class="navbtn" id="nav-opciones" onclick="showAnalisisOpciones()">Análisis de Opciones</button>
+    <button class="navbtn" id="nav-documentos" onclick="showDocumentosFondo()">Documentos</button>
   </div>
   <div class="main" id="main"></div>
 </div>
@@ -337,7 +338,7 @@ async function cargarAnalisisOpciones(){
   ANALISIS_OPCIONES = (data||[]).map(r=>({ id:r.id, fechaAnalisis:r.fecha_analisis, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, posicion:r.posicion, strike:r.strike, vencimiento:r.vencimiento, prima:r.prima, contratos:r.contratos, delta:r.delta, gamma:r.gamma, theta:r.theta, vega:r.vega, rho:r.rho, iv:r.iv, volatilidadHistorica:r.volatilidad_historica, volumen:r.volumen, interesAbierto:r.interes_abierto, notas:r.notas }));
 }
 async function cargarTodo(){
-  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados(), cargarAnalisisOpciones()]);
+  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados(), cargarAnalisisOpciones(), cargarDocumentosFondo()]);
 }
 
 // ---------- CÁLCULOS DEL FONDO ----------
@@ -418,6 +419,7 @@ function renderTodo(){
   else if(currentView==='cartera') showCarteraFondo();
   else if(currentView==='operaciones') showOperacionesFondo();
   else if(currentView==='opciones') showAnalisisOpciones();
+  else if(currentView==='documentos') showDocumentosFondo();
 }
 
 // ---------- PANEL PRINCIPAL ----------
@@ -1868,6 +1870,91 @@ function showDetalleOpcionAnalisis(id){
     options:{ responsive:true, maintainAspectRatio:false, scales:{ x:{ title:{display:true,text:'Precio del subyacente',color:textColor}, ticks:{color:textColor, maxTicksLimit:8}, grid:{color:gridColor} }, y:{ ticks:{color:textColor, callback:v=>'US$'+v}, grid:{color:gridColor} } }, plugins:{ legend:{display:false} } }
   });
   chartRefs.push(chart);
+}
+
+// ---------- DOCUMENTOS DEL FONDO (informes, posiciones agregadas, etc.) ----------
+// Se guardan en un bucket privado de Supabase Storage; el cliente los ve/descarga en su
+// panel según los permisos (RLS) del fondo donde tiene posición — ver migration_documentos_fondo.sql.
+let DOCUMENTOS = [];
+async function cargarDocumentosFondo(){
+  const { data } = await sb.from('documentos_fondo').select('*').eq('fondo_id', FONDO_ID).order('fecha',{ascending:false});
+  DOCUMENTOS = (data||[]).map(r=>({ id:r.id, titulo:r.titulo, categoria:r.categoria, storagePath:r.storage_path, fecha:r.fecha }));
+}
+
+function showDocumentosFondo(){
+  currentView='documentos'; setNav('nav-documentos');
+  destroyCharts();
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <h1>Documentos del fondo</h1>
+    <p class="subtitle">Informes periódicos, posiciones agregadas y otros documentos — visibles para los cuotapartistas de Apex Strategy Fund en su panel.</p>
+    <div class="formbox" style="max-width:100%;">
+      <h4 style="margin-top:0;">Subir nuevo documento</h4>
+      <div class="formrow">
+        <div><label>Título</label><input type="text" id="doc-titulo" placeholder="Informe 3er trimestre 2026"></div>
+        <div><label>Categoría</label><select id="doc-categoria">
+          <option>Informe periódico</option>
+          <option>Posiciones agregadas</option>
+          <option>Otro</option>
+        </select></div>
+      </div>
+      <label>Fecha</label><input type="date" id="doc-fecha" value="${new Date().toISOString().slice(0,10)}">
+      <label>Archivo (PDF)</label><input type="file" id="doc-archivo" accept="application/pdf">
+      <button class="btn" onclick="subirDocumentoFondo()">Subir</button>
+      <div id="doc-msg" class="msg"></div>
+    </div>
+    <div class="panel">
+      <h3>Documentos cargados (${DOCUMENTOS.length})</h3>
+      ${DOCUMENTOS.length===0?'<div class="empty">Todavía no subiste ningún documento.</div>':`
+      <table>
+        <tr><th>Fecha</th><th>Título</th><th>Categoría</th><th></th></tr>
+        ${DOCUMENTOS.map(d=>`
+          <tr>
+            <td>${d.fecha||'-'}</td>
+            <td class="name">${d.titulo}</td>
+            <td>${d.categoria?`<span class="tag">${d.categoria}</span>`:'<span class="na">-</span>'}</td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--loss);" onclick="eliminarDocumentoFondo('${d.id}')">eliminar</span></td>
+          </tr>`).join('')}
+      </table>`}
+    </div>
+  `;
+}
+
+async function subirDocumentoFondo(){
+  const msg = document.getElementById('doc-msg');
+  const titulo = document.getElementById('doc-titulo').value.trim();
+  const categoria = document.getElementById('doc-categoria').value;
+  const fecha = document.getElementById('doc-fecha').value;
+  const file = document.getElementById('doc-archivo').files[0];
+  if(!titulo){ msg.className='msg err'; msg.textContent='Ingresá un título.'; return; }
+  if(!file){ msg.className='msg err'; msg.textContent='Elegí un archivo PDF.'; return; }
+  msg.className='msg'; msg.textContent='Subiendo...';
+  try{
+    const path = `${FONDO_ID}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+    const { error: errUpload } = await sb.storage.from('documentos-fondo').upload(path, file);
+    if(errUpload) throw errUpload;
+    const { error: errInsert } = await sb.from('documentos_fondo').insert({ fondo_id: FONDO_ID, titulo, categoria, storage_path: path, fecha: fecha||null });
+    if(errInsert) throw errInsert;
+    await cargarDocumentosFondo();
+    msg.className='msg ok'; msg.textContent='Documento subido.';
+    showDocumentosFondo();
+  }catch(e){
+    msg.className='msg err'; msg.textContent = 'Error al subir: ' + (e.message||'desconocido');
+  }
+}
+
+async function eliminarDocumentoFondo(id){
+  const doc = DOCUMENTOS.find(d=>d.id===id);
+  if(!doc) return;
+  if(!confirm(`¿Eliminar "${doc.titulo}"? Esta acción no se puede deshacer.`)) return;
+  try{
+    await sb.storage.from('documentos-fondo').remove([doc.storagePath]);
+    await sb.from('documentos_fondo').delete().eq('id', id);
+    await cargarDocumentosFondo();
+    showDocumentosFondo();
+  }catch(e){
+    alert('Error al eliminar el documento.');
+  }
 }
 
 // ---------- ARRANQUE ----------

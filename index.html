@@ -310,11 +310,12 @@ async function mostrarFondoDetalle(cuotapartistaId, fondoId){
   const main = document.getElementById('main');
   main.innerHTML = `<p class="subtitle">Cargando...</p>`;
 
-  const [{ data: fichaRows, error: errFicha }, { data: movs, error: errMovs }, { data: composicion, error: errComp }, { data: historial, error: errHist }] = await Promise.all([
+  const [{ data: fichaRows, error: errFicha }, { data: movs, error: errMovs }, { data: composicion, error: errComp }, { data: historial, error: errHist }, { data: documentosSubidos, error: errDocs }] = await Promise.all([
     sb.rpc('mi_ficha', { p_cuotapartista_id: cuotapartistaId }),
     sb.rpc('mis_movimientos', { p_cuotapartista_id: cuotapartistaId }),
     sb.rpc('composicion_cartera_publica', { p_cuotapartista_id: cuotapartistaId }),
-    sb.rpc('historial_valor_cuotaparte', { p_cuotapartista_id: cuotapartistaId })
+    sb.rpc('historial_valor_cuotaparte', { p_cuotapartista_id: cuotapartistaId }),
+    sb.rpc('mis_documentos', { p_cuotapartista_id: cuotapartistaId })
   ]);
 
   if(errFicha || !fichaRows || fichaRows.length===0){
@@ -359,6 +360,20 @@ async function mostrarFondoDetalle(cuotapartistaId, fondoId){
       </div>
       <div class="hint">Es la mezcla de activos de todo el fondo — tu inversión está expuesta proporcionalmente a esta composición. Click en una acción para ver más datos de la empresa.</div>
       `}
+    </div>
+    <div class="panel">
+      <h3>Informes y documentos</h3>
+      ${(!documentosSubidos || documentosSubidos.length===0 || errDocs) ? '<div class="empty">Todavía no hay informes cargados.</div>' : `
+      <table>
+        <tr><th>Fecha</th><th>Título</th><th>Categoría</th><th></th></tr>
+        ${documentosSubidos.map(d=>`
+          <tr>
+            <td>${d.fecha||'-'}</td>
+            <td class="name">${d.titulo}</td>
+            <td>${d.categoria?`<span class="tag">${d.categoria}</span>`:'<span class="na">-</span>'}</td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--gold);" onclick="descargarDocumento('${d.storage_path}')">↓ descargar</span></td>
+          </tr>`).join('')}
+      </table>`}
     </div>
     <div class="panel">
       <h3>Historial de movimientos</h3>
@@ -412,6 +427,14 @@ async function mostrarFondoDetalle(cuotapartistaId, fondoId){
 }
 
 // ---------- INFO DE LA EMPRESA (Finnhub — datos públicos de mercado, no datos del fondo) ----------
+// El bucket de documentos es privado — se pide un link firmado de un solo uso
+// (válido 60 segundos) en vez de un link directo, así nadie puede compartir la URL.
+async function descargarDocumento(storagePath){
+  const { data, error } = await sb.storage.from('documentos-fondo').createSignedUrl(storagePath, 60);
+  if(error || !data){ alert('No pudimos generar el link de descarga. Probá de nuevo en un momento.'); return; }
+  window.open(data.signedUrl, '_blank');
+}
+
 function cerrarModal(){
   document.getElementById('modal-overlay').style.display='none';
 }
