@@ -164,6 +164,7 @@ tr.clickable:hover td{background:var(--panel2);cursor:pointer;}
     <button class="navbtn" id="nav-operaciones" onclick="showOperacionesFondo()">Operaciones</button>
     <button class="navbtn" id="nav-opciones" onclick="showAnalisisOpciones()">Análisis de Opciones</button>
     <button class="navbtn" id="nav-documentos" onclick="showDocumentosFondo()">Documentos</button>
+    <button class="navbtn" id="nav-solicitudes" onclick="showSolicitudesOnboarding()">Solicitudes<span id="solicitudes-badge"></span></button>
   </div>
   <div class="main" id="main"></div>
 </div>
@@ -302,7 +303,7 @@ async function cargarCuotapartistas(){
   CUOTAPARTISTAS = {};
   for(const r of (data||[])){
     const persona = PERSONAS[r.persona_id] || {};
-    CUOTAPARTISTAS[r.id] = { ...persona, id:r.id, personaId:r.persona_id, fondoId:r.fondo_id, estado:r.estado };
+    CUOTAPARTISTAS[r.id] = { ...persona, id:r.id, personaId:r.persona_id, fondoId:r.fondo_id, estado:r.estado, numeroCuenta:r.numero_cuenta };
   }
 }
 async function cargarMovimientos(){
@@ -338,7 +339,7 @@ async function cargarAnalisisOpciones(){
   ANALISIS_OPCIONES = (data||[]).map(r=>({ id:r.id, fechaAnalisis:r.fecha_analisis, subyacente:r.subyacente, tipoOpcion:r.tipo_opcion, posicion:r.posicion, strike:r.strike, vencimiento:r.vencimiento, prima:r.prima, contratos:r.contratos, delta:r.delta, gamma:r.gamma, theta:r.theta, vega:r.vega, rho:r.rho, iv:r.iv, volatilidadHistorica:r.volatilidad_historica, volumen:r.volumen, interesAbierto:r.interes_abierto, notas:r.notas }));
 }
 async function cargarTodo(){
-  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados(), cargarAnalisisOpciones(), cargarDocumentosFondo()]);
+  await Promise.all([cargarCuotapartistas(), cargarMovimientos(), cargarPosiciones(), cargarOperaciones(), cargarLiquidez(), cargarValuaciones(), cargarLotes(), cargarResultados(), cargarAnalisisOpciones(), cargarDocumentosFondo(), cargarSolicitudesOnboarding()]);
 }
 
 // ---------- CÁLCULOS DEL FONDO ----------
@@ -420,6 +421,7 @@ function renderTodo(){
   else if(currentView==='operaciones') showOperacionesFondo();
   else if(currentView==='opciones') showAnalisisOpciones();
   else if(currentView==='documentos') showDocumentosFondo();
+  else if(currentView==='solicitudes') showSolicitudesOnboarding();
 }
 
 // ---------- PANEL PRINCIPAL ----------
@@ -764,6 +766,7 @@ function showFichaCuotapartista(id){
     <div class="panel">
       <h3>Ficha</h3>
       <div class="fichagrid">
+        <div class="f"><div class="f-label">N° de cuenta</div>${cp.numeroCuenta||'-'}</div>
         <div class="f"><div class="f-label">Documento</div>${cp.documento||'-'}</div>
         <div class="f"><div class="f-label">País</div>${cp.pais||'-'}</div>
         <div class="f"><div class="f-label">Provincia / Estado</div>${cp.provincia||'-'}</div>
@@ -1954,6 +1957,135 @@ async function eliminarDocumentoFondo(id){
     showDocumentosFondo();
   }catch(e){
     alert('Error al eliminar el documento.');
+  }
+}
+
+// ---------- SOLICITUDES DE ONBOARDING (bandeja de aprobación) ----------
+// Llegan desde afuera (proyecto de onboarding en Vercel) vía una Edge Function — ver
+// supabase/functions/onboarding-nueva-solicitud. Nunca crean el cliente solas: hay que
+// Aprobar acá, recién ahí se genera la persona + el cuotapartista + el número de cuenta.
+let SOLICITUDES = [];
+async function cargarSolicitudesOnboarding(){
+  const { data } = await sb.from('onboarding_solicitudes').select('*').eq('fondo_id', FONDO_ID).order('created_at',{ascending:false});
+  SOLICITUDES = (data||[]).map(r=>({
+    id:r.id, estado:r.estado, nombreRazonSocial:r.nombre_razon_social, tipoPersona:r.tipo_persona,
+    documento:r.documento, email:r.email, telefono:r.telefono, pais:r.pais, provincia:r.provincia,
+    localidad:r.localidad, domicilio:r.domicilio, montoSolicitado:r.monto_solicitado, datos:r.datos,
+    numeroCuenta:r.numero_cuenta, motivoRechazo:r.motivo_rechazo, createdAt:r.created_at
+  }));
+  const pendientes = SOLICITUDES.filter(s=>s.estado==='Pendiente').length;
+  const badge = document.getElementById('solicitudes-badge');
+  if(badge) badge.innerHTML = pendientes>0 ? ` <span class="badge-mini" style="background:var(--gold);color:#1a1408;">${pendientes}</span>` : '';
+}
+
+function showSolicitudesOnboarding(){
+  currentView='solicitudes'; setNav('nav-solicitudes');
+  destroyCharts();
+  const main = document.getElementById('main');
+  const pendientes = SOLICITUDES.filter(s=>s.estado==='Pendiente');
+  const revisadas = SOLICITUDES.filter(s=>s.estado!=='Pendiente');
+  main.innerHTML = `
+    <h1>Solicitudes de onboarding</h1>
+    <p class="subtitle">Altas que llegan desde el formulario de onboarding — revisá y aprobá para crear el cliente y asignarle número de cuenta.</p>
+    <div class="panel">
+      <h3>Pendientes (${pendientes.length})</h3>
+      ${pendientes.length===0?'<div class="empty">No hay solicitudes pendientes.</div>':`
+      <table>
+        <tr><th>Fecha</th><th>Nombre</th><th>Email</th><th class="right">Monto</th><th></th></tr>
+        ${pendientes.map(s=>`
+          <tr>
+            <td>${(s.createdAt||'').slice(0,10)}</td>
+            <td class="name">${s.nombreRazonSocial}</td>
+            <td>${s.email||'-'}</td>
+            <td class="right">${s.montoSolicitado!=null?fmtUSD(s.montoSolicitado):'<span class="na">-</span>'}</td>
+            <td class="right"><span class="del" style="opacity:1;cursor:pointer;color:var(--gold);" onclick="showRevisionSolicitud('${s.id}')">revisar</span></td>
+          </tr>`).join('')}
+      </table>`}
+    </div>
+    <div id="solicitud-revision"></div>
+    <div class="panel">
+      <h3>Historial (${revisadas.length})</h3>
+      ${revisadas.length===0?'<div class="empty">Todavía no se revisó ninguna solicitud.</div>':`
+      <table>
+        <tr><th>Fecha</th><th>Nombre</th><th>Estado</th><th>N° de cuenta</th></tr>
+        ${revisadas.map(s=>`
+          <tr>
+            <td>${(s.createdAt||'').slice(0,10)}</td>
+            <td class="name">${s.nombreRazonSocial}</td>
+            <td><span class="tag" style="${s.estado==='Aprobada'?'background:var(--gain-bg);color:var(--gain);':'background:var(--loss-bg);color:var(--loss);'}">${s.estado}</span></td>
+            <td>${s.numeroCuenta||'-'}</td>
+          </tr>`).join('')}
+      </table>`}
+    </div>
+  `;
+}
+
+function showRevisionSolicitud(id){
+  const s = SOLICITUDES.find(x=>x.id===id);
+  if(!s) return;
+  const el = document.getElementById('solicitud-revision');
+  if(!el) return;
+  const d = s.datos || {};
+  el.innerHTML = `
+    <div class="formbox" style="max-width:100%;">
+      <h4 style="margin-top:0;">Revisar solicitud: ${s.nombreRazonSocial}</h4>
+      <div class="fichagrid">
+        <div class="f"><div class="f-label">Tipo</div>${s.tipoPersona||'-'}</div>
+        <div class="f"><div class="f-label">Documento</div>${s.documento||'-'}</div>
+        <div class="f"><div class="f-label">Email</div>${s.email||'-'}</div>
+        <div class="f"><div class="f-label">Teléfono</div>${s.telefono||'-'}</div>
+        <div class="f"><div class="f-label">País</div>${s.pais||'-'}</div>
+        <div class="f"><div class="f-label">Provincia</div>${s.provincia||'-'}</div>
+        <div class="f"><div class="f-label">Localidad</div>${s.localidad||'-'}</div>
+        <div class="f"><div class="f-label">Domicilio</div>${s.domicilio||'-'}</div>
+        <div class="f"><div class="f-label">Monto solicitado</div>${s.montoSolicitado!=null?fmtUSD(s.montoSolicitado):'-'}</div>
+        <div class="f"><div class="f-label">Residente EE.UU.</div>${d.usResident===true?'Sí':(d.usResident===false?'No':'-')}</div>
+        <div class="f"><div class="f-label">Nacionalidad</div>${(d.identification&&d.identification.nationality)||'-'}</div>
+        <div class="f"><div class="f-label">Fecha de nacimiento</div>${(d.identification&&d.identification.birthDate)||'-'}</div>
+        <div class="f"><div class="f-label">Ingreso anual</div>${(d.profile&&d.profile.annualIncome)||'-'}</div>
+        <div class="f"><div class="f-label">Patrimonio total</div>${(d.profile&&d.profile.netWorthTotal)||'-'}</div>
+        <div class="f"><div class="f-label">Patrimonio líquido</div>${(d.profile&&d.profile.netWorthLiquid)||'-'}</div>
+        <div class="f"><div class="f-label">Firma del acuerdo</div>${(d.agreement&&d.agreement.signer)||'-'} ${(d.agreement&&d.agreement.signedAt)?('· '+d.agreement.signedAt.slice(0,10)):''}</div>
+      </div>
+      ${(d.docs&&d.docs.length>0)?`
+      <h4>Documentos declarados</h4>
+      <ul style="font-size:12.5px;color:var(--text2);margin:0;padding-left:18px;">
+        ${d.docs.map(doc=>`<li>${doc.key} — ${doc.method}${doc.fileName?(' ('+doc.fileName+')'):''}</li>`).join('')}
+      </ul>`:''}
+      <div class="hint">Se guardó el payload completo del onboarding para auditoría (campo "datos" en la tabla).</div>
+      <button class="btn" onclick="aprobarSolicitud('${s.id}')">Aprobar y crear cliente</button>
+      <button class="btn secondary" onclick="document.getElementById('solicitud-revision').innerHTML=''">Cerrar</button>
+      <button class="btn secondary" style="color:var(--loss);" onclick="rechazarSolicitud('${s.id}')">Rechazar</button>
+      <div id="solicitud-msg" class="msg"></div>
+    </div>
+  `;
+}
+
+async function aprobarSolicitud(id){
+  const msg = document.getElementById('solicitud-msg');
+  if(!confirm('¿Aprobar esta solicitud? Se va a crear el cliente y asignarle un número de cuenta.')) return;
+  try{
+    const { data, error } = await sb.rpc('aprobar_solicitud_onboarding', { p_solicitud_id: id });
+    if(error) throw error;
+    const numeroCuenta = data && data[0] ? data[0].numero_cuenta : null;
+    await cargarCuotapartistas();
+    await cargarSolicitudesOnboarding();
+    showSolicitudesOnboarding();
+    alert(`Cliente creado. Número de cuenta: ${numeroCuenta||'-'}`);
+  }catch(e){
+    if(msg){ msg.className='msg err'; msg.textContent = 'Error al aprobar: ' + (e.message||'desconocido'); }
+  }
+}
+
+async function rechazarSolicitud(id){
+  const motivo = prompt('Motivo del rechazo (opcional):') || null;
+  try{
+    const { error } = await sb.rpc('rechazar_solicitud_onboarding', { p_solicitud_id: id, p_motivo: motivo });
+    if(error) throw error;
+    await cargarSolicitudesOnboarding();
+    showSolicitudesOnboarding();
+  }catch(e){
+    alert('Error al rechazar la solicitud.');
   }
 }
 
